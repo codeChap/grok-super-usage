@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, TimeZone, Utc};
 use rusqlite::{Connection, OpenFlags};
@@ -7,11 +6,10 @@ use serde_json::Value;
 
 use crate::scan::{emit, ScanResult};
 use crate::util::{
-    atomic_write_json, decode_jwt, expand_path, home_dir, http_error_kind, http_status, parse_iso,
-    plain_text, to_iso,
+    account_display_name, atomic_write_json, decode_jwt, expand_path, home_dir, http_agent,
+    http_error_kind, http_status, parse_iso, plain_text, to_iso,
 };
 
-const USER_AGENT: &str = "codechap-grokbar/0.1";
 const API_BASE: &str = "https://api2.cursor.sh/aiserver.v1.DashboardService";
 const TOKEN_URL: &str = "https://api2.cursor.sh/oauth/token";
 const CLIENT_ID: &str = "KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB";
@@ -101,13 +99,6 @@ pub fn run(
     creds.account_name = account_name;
     creds.account_email = account_email;
     emit(&build_result(&creds, &payload, &tier_label))
-}
-
-fn agent() -> ureq::Agent {
-    ureq::builder()
-        .timeout(Duration::from_secs(20))
-        .user_agent(USER_AGENT)
-        .build()
 }
 
 fn expired_x_result() -> ScanResult {
@@ -438,7 +429,7 @@ fn refresh_token(creds: &mut Creds) -> Result<(), &'static str> {
         "client_id": CLIENT_ID,
         "refresh_token": creds.refresh_token,
     });
-    let response = agent()
+    let response = http_agent()
         .post(TOKEN_URL)
         .set("Content-Type", "application/json")
         .set("Accept", "application/json")
@@ -503,7 +494,7 @@ fn ensure_token(creds: &mut Creds) -> Result<(), &'static str> {
 }
 
 fn http_post_json(url: &str, token: &str, body: Value) -> Result<Value, String> {
-    let mut req = agent()
+    let mut req = http_agent()
         .post(url)
         .set("Content-Type", "application/json")
         .set("Connect-Protocol-Version", "1");
@@ -560,32 +551,6 @@ fn fetch_plan_name(token: &str) -> String {
         .unwrap_or("")
         .trim()
         .to_string()
-}
-
-fn account_display_name(payload: &Value) -> String {
-    if let Some(name) = payload.get("name").and_then(Value::as_str) {
-        let name = name.trim();
-        if !name.is_empty() {
-            return name.to_string();
-        }
-    }
-    let first = payload
-        .get("firstName")
-        .or_else(|| payload.get("given_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let last = payload
-        .get("lastName")
-        .or_else(|| payload.get("family_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    [first, last]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn fetch_account(token: &str) -> (String, String) {

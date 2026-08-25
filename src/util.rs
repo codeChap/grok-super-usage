@@ -2,9 +2,12 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
+
+const USER_AGENT: &str = "codechap-grokbar/0.1";
 
 const RESOURCE_MARKUP: &[&str] = &[
     "<img", "<image", "<object", "<embed", "<iframe", "<frame", "<link", "<meta", "<base",
@@ -100,6 +103,39 @@ pub fn decode_jwt(token: &str) -> Option<Value> {
     value.is_object().then_some(value)
 }
 
+pub fn http_agent() -> ureq::Agent {
+    ureq::builder()
+        .timeout(Duration::from_secs(20))
+        .user_agent(USER_AGENT)
+        .build()
+}
+
+pub fn account_display_name(payload: &Value) -> String {
+    if let Some(name) = payload.get("name").and_then(Value::as_str) {
+        let name = name.trim();
+        if !name.is_empty() {
+            return name.to_string();
+        }
+    }
+    let first = payload
+        .get("firstName")
+        .or_else(|| payload.get("given_name"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let last = payload
+        .get("lastName")
+        .or_else(|| payload.get("family_name"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    [first, last]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn http_error_kind(err: &ureq::Error) -> &'static str {
     match err {
         ureq::Error::Status(code, _) if matches!(code, 401 | 403) => "auth",
@@ -123,5 +159,29 @@ mod tests {
     fn strips_img_markup() {
         assert_eq!(plain_text("<img src=x>", 80), "");
         assert_eq!(plain_text("SuperGrok Heavy", 80), "SuperGrok Heavy");
+    }
+
+    #[test]
+    fn account_name_prefers_full_name_then_given_family() {
+        assert_eq!(
+            account_display_name(&serde_json::json!({"name": " Ada Lovelace "})),
+            "Ada Lovelace"
+        );
+        assert_eq!(
+            account_display_name(&serde_json::json!({
+                "firstName": "Ada",
+                "lastName": "Lovelace"
+            })),
+            "Ada Lovelace"
+        );
+        assert_eq!(
+            account_display_name(&serde_json::json!({
+                "given_name": "Ada",
+                "family_name": "Lovelace"
+            })),
+            "Ada Lovelace"
+        );
+        assert_eq!(account_display_name(&serde_json::json!({"name": "  "})), "");
+        assert_eq!(account_display_name(&serde_json::json!({})), "");
     }
 }

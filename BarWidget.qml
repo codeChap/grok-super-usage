@@ -5,9 +5,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Bar widget: Grok weekly pool, plus optional Cursor monthly pools.
-// Scanner is the Rust `grokbar` binary next to this QML (not Python).
-// Cursor is off by default; the panel toggle (showCursorUsage) turns it on.
+// Bar chip: SuperGrok weekly % / reset, plus optional API invoice spend.
 // Left click toggles the panel; right click refreshes.
 BarWidget {
   id: root
@@ -32,7 +30,6 @@ BarWidget {
   property var categories: []
   property bool hasData: false
   property bool refreshing: false
-  // Signed in with usable credentials (auth.json present / refreshable).
   property bool grokAvailable: false
 
   property string billingLabel: ""
@@ -44,37 +41,15 @@ BarWidget {
   property bool billingRefreshing: false
   property bool billingAvailable: false
 
-  // Cursor (X-login session only — Google Cursor accounts are ignored).
-  property real cursorAutoPercent: -1
-  property real cursorApiPercent: -1
-  property string cursorResetAt: ""
-  property string cursorPeriodStart: ""
-  property string cursorTierLabel: ""
-  property string cursorLoginName: ""
-  property string cursorLoginEmail: ""
-  property string cursorUsageStatusText: ""
-  property string cursorAuthHelpText: ""
-  property bool cursorHasData: false
-  property bool cursorRefreshing: false
-  property bool cursorAvailable: false
-
   readonly property int refreshIntervalSec: Math.max(30, Number(setting("refreshIntervalSec", 300)) || 300)
-  readonly property bool showWeeklyUsage: setting("showWeeklyUsage", true) !== false
-  readonly property bool showApiBilling: setting("showApiBilling", true) !== false
-  readonly property bool paceAlarm: setting("paceAlarm", false) === true
-  // Off unless the panel toggle (or shell.json) turns it on. Bind to
-  // `settings` directly so persistSettings() redraws without a reload.
-  readonly property bool showCursorUsage: false
+  readonly property bool showWeeklyUsage: !settings || settings.showWeeklyUsage !== false
+  readonly property bool showApiBilling: !settings || settings.showApiBilling !== false
+  readonly property bool paceAlarm: !!(settings && settings.paceAlarm === true)
 
-  // TEMP QA hook: force over-pace styling (leave false in production).
-  readonly property bool simulateOverPace: false
-
-  // Expected usage by now = elapsed / period (0–1). -1 when unknown.
   readonly property real expectedPace: {
     var start = root.parseTimeMs(periodStart)
     var end = root.parseTimeMs(resetAt)
     if (!(start > 0) || !(end > start)) {
-      // Weekly fallback: 7d before reset.
       if (!(end > 0)) return -1
       start = end - 7 * 24 * 3600 * 1000
     }
@@ -83,18 +58,9 @@ BarWidget {
     return Math.max(0, Math.min(1, frac))
   }
 
-  // Displayed usage % (simulation can push past the pace marker).
-  readonly property real displayPercent: {
-    if (!root.simulateOverPace || !(primaryPercent >= 0) || !(expectedPace >= 0))
-      return primaryPercent
-    return Math.max(0, Math.min(1, Math.max(primaryPercent, expectedPace + 0.15)))
-  }
-
-  // Over budget if used more than the linear pace marker allows.
+  readonly property real displayPercent: primaryPercent
   readonly property bool overPace: expectedPace >= 0 && displayPercent >= 0
     && displayPercent > expectedPace + 0.0001
-  // Do not paint the chip urgent in the first hours of a new week just
-  // because 3% is already ahead of a 0.7% even-burn line. Default 15%.
   readonly property real paceAlarmFloor: {
     var v = Number(setting("paceAlarmFloor", 0.15))
     if (!isFinite(v)) return 0.15
@@ -102,6 +68,8 @@ BarWidget {
   }
   readonly property bool grokAlarming: displayPercent >= 0.9
     || (paceAlarm && overPace && displayPercent >= paceAlarmFloor)
+  readonly property bool alarming: grokAlarming
+  readonly property bool grokVisible: grokAvailable && hasData
   readonly property string primaryText: displayPercent >= 0 ? Math.round(displayPercent * 100) + "%" : ""
   readonly property string resetText: {
     if (resetAt === "") return ""
@@ -109,58 +77,10 @@ BarWidget {
     return isFinite(ms) ? root.formatBarDuration(ms) : ""
   }
   readonly property string billingText: root.billingHasData && root.billingLabel !== ""
-    ? root.billingLabel
-    : ""
-
-  // Monthly expected usage by now. Fallback: 1 month before reset (not Grok's 7d).
-  readonly property real cursorExpectedPace: {
-    var start = root.parseTimeMs(cursorPeriodStart)
-    var end = root.parseTimeMs(cursorResetAt)
-    if (!(start > 0) || !(end > start)) {
-      if (!(end > 0)) return -1
-      start = end - 30 * 24 * 3600 * 1000
-    }
-    var frac = (root.nowMs - start) / (end - start)
-    if (!isFinite(frac)) return -1
-    return Math.max(0, Math.min(1, frac))
-  }
-
-  readonly property real cursorAutoDisplay: {
-    if (!root.simulateOverPace || !(cursorAutoPercent >= 0) || !(cursorExpectedPace >= 0))
-      return cursorAutoPercent
-    return Math.max(0, Math.min(1, Math.max(cursorAutoPercent, cursorExpectedPace + 0.15)))
-  }
-  readonly property real cursorApiDisplay: {
-    if (!root.simulateOverPace || !(cursorApiPercent >= 0) || !(cursorExpectedPace >= 0))
-      return cursorApiPercent
-    return Math.max(0, Math.min(1, Math.max(cursorApiPercent, cursorExpectedPace + 0.15)))
-  }
-  readonly property bool cursorAutoOverPace: cursorExpectedPace >= 0 && cursorAutoDisplay >= 0
-    && cursorAutoDisplay > cursorExpectedPace + 0.0001
-  readonly property bool cursorApiOverPace: cursorExpectedPace >= 0 && cursorApiDisplay >= 0
-    && cursorApiDisplay > cursorExpectedPace + 0.0001
-  readonly property bool cursorAlarming: cursorAutoDisplay >= 0.9 || cursorApiDisplay >= 0.9
-    || (cursorAutoOverPace && cursorAutoDisplay >= paceAlarmFloor)
-    || (cursorApiOverPace && cursorApiDisplay >= paceAlarmFloor)
-  readonly property string cursorAutoText: cursorAutoDisplay >= 0 ? Math.round(cursorAutoDisplay * 100) + "%" : ""
-  readonly property string cursorApiText: cursorApiDisplay >= 0 ? Math.round(cursorApiDisplay * 100) + "%" : ""
-  readonly property string cursorResetText: {
-    if (cursorResetAt === "") return ""
-    var ms = new Date(cursorResetAt).getTime() - root.nowMs
-    return isFinite(ms) ? root.formatBarDuration(ms) : ""
-  }
-
-  readonly property bool grokVisible: grokAvailable && hasData
-  readonly property bool cursorVisible: showCursorUsage && cursorAvailable && cursorHasData
-  readonly property bool alarming: grokAlarming || (cursorVisible && cursorAlarming)
+    ? root.billingLabel : ""
 
   readonly property string scannerPath: String(Qt.resolvedUrl("grokbar")).replace("file://", "")
-  // White icon only — MultiEffect recolors it to bar.foreground so it tracks
-  // the theme the same way glyph widgets do (baked #fff/#111 never will).
   readonly property url iconSource: Qt.resolvedUrl("assets/grok.svg")
-  readonly property url cursorIconSource: Qt.resolvedUrl("assets/cursor.svg")
-
-  // Shape contract for shell.summon/hide/toggle routing.
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
@@ -174,6 +94,11 @@ BarWidget {
     return text
   }
 
+  function looksLikeManagementKey(value) {
+    var text = String(value || "").trim()
+    return text.indexOf("xai-") === 0 || text.indexOf("xai_") === 0
+  }
+
   function scannerCommand(probe) {
     var command = [root.scannerPath, "grok"]
     if (probe)
@@ -182,11 +107,6 @@ BarWidget {
     if (authPath !== "")
       command.push("--auth", authPath)
     return command
-  }
-
-  function looksLikeManagementKey(value) {
-    var text = String(value || "").trim()
-    return text.indexOf("xai-") === 0 || text.indexOf("xai_") === 0
   }
 
   function billingCommand(probe) {
@@ -202,23 +122,6 @@ BarWidget {
     return command
   }
 
-  function cursorScannerCommand(probe) {
-    var command = [root.scannerPath, "cursor"]
-    if (probe)
-      command.push("--probe")
-    var authPath = root.resolvePath(root.setting("cursorAuthPath", ""))
-    if (authPath !== "")
-      command.push("--auth", authPath)
-    var stateDb = root.resolvePath(root.setting("stateDbPath", ""))
-    if (stateDb !== "")
-      command.push("--state-db", stateDb)
-    var grokAuth = root.resolvePath(root.setting("authPath", ""))
-    if (grokAuth !== "")
-      command.push("--grok-auth", grokAuth)
-    return command
-  }
-
-  // ≥1 day → "5d"; under a day → "12h" (no minutes on the bar).
   function formatBarDuration(ms) {
     if (!(ms > 0)) return "now"
     var hours = Math.floor(ms / 3600000)
@@ -272,53 +175,48 @@ BarWidget {
     root.hasData = false
   }
 
-  function applyCursorScan(data) {
-    if (!data || typeof data !== "object") {
-      root.cursorHasData = false
-      return
+  function parseScannerJson(text, label) {
+    var raw = String(text || "").trim()
+    if (raw === "" || raw === "ready" || raw === "absent")
+      return undefined
+    if (raw.charAt(0) !== "{" && raw.charAt(0) !== "[") {
+      console.warn("codechap.grokbar: unexpected " + label + " output", raw.slice(0, 120))
+      return undefined
     }
-    var autoPct = Number(data.rateLimitPercent)
-    var apiPct = Number(data.secondaryRateLimitPercent)
-    if (!isFinite(autoPct)) autoPct = -1
-    if (!isFinite(apiPct)) apiPct = -1
-    root.cursorAutoPercent = autoPct
-    root.cursorApiPercent = apiPct
-    root.cursorResetAt = String(data.rateLimitResetAt || data.secondaryRateLimitResetAt || "")
-    root.cursorPeriodStart = String(data.rateLimitPeriodStart || "")
-    root.cursorTierLabel = String(data.tierLabel || "")
-    root.cursorLoginName = String(data.accountName || "")
-    root.cursorLoginEmail = String(data.accountEmail || "")
-    root.cursorUsageStatusText = String(data.usageStatusText || "")
-    root.cursorAuthHelpText = String(data.authHelpText || "")
-    root.cursorHasData = autoPct >= 0 || apiPct >= 0
-    root.nowMs = Date.now()
-    root.injectPanel()
+    try {
+      return JSON.parse(raw)
+    } catch (e) {
+      console.warn("codechap.grokbar: bad " + label + " JSON", e, raw.slice(0, 120))
+      return null
+    }
   }
 
-  function clearCursorUsage() {
-    root.cursorAutoPercent = -1
-    root.cursorApiPercent = -1
-    root.cursorResetAt = ""
-    root.cursorPeriodStart = ""
-    root.cursorTierLabel = ""
-    root.cursorLoginName = ""
-    root.cursorLoginEmail = ""
-    root.cursorUsageStatusText = ""
-    root.cursorAuthHelpText = ""
-    root.cursorHasData = false
+  function restartProcess(proc, command) {
+    if (!proc) return
+    if (proc.running)
+      proc.running = false
+    if (command)
+      proc.command = command
+    Qt.callLater(function() {
+      if (proc) proc.running = true
+    })
   }
 
   function probeGrok() {
-    if (!presenceProbe.running) presenceProbe.running = true
+    root.restartProcess(presenceProbe, root.scannerCommand(true))
   }
 
   function probeBilling() {
-    if (!billingProbe.running) billingProbe.running = true
+    root.restartProcess(billingProbe, root.billingCommand(true))
   }
 
   function applyBilling(data) {
-    if (!data || typeof data !== "object") {
-      root.billingHasData = false
+    if (!data || typeof data !== "object" || data.ready !== true) {
+      if (data && data.usageStatusText)
+        root.billingStatusText = String(data.usageStatusText || "")
+      if (data && data.authHelpText)
+        root.billingHelpText = String(data.authHelpText || "")
+      root.injectPanel()
       return
     }
     var usd = Number(data.amountUsd)
@@ -327,32 +225,15 @@ BarWidget {
     root.billingPeriod = String(data.period || "")
     root.billingStatusText = String(data.usageStatusText || "")
     root.billingHelpText = String(data.authHelpText || "")
-    root.billingHasData = data.ready === true && root.billingLabel !== ""
+    root.billingHasData = root.billingLabel !== ""
+    root.billingAvailable = true
     root.injectPanel()
   }
 
-  function clearBilling() {
-    root.billingLabel = ""
-    root.billingUsd = -1
-    root.billingPeriod = ""
-    root.billingStatusText = ""
-    root.billingHelpText = ""
-    root.billingHasData = false
-  }
-
   function refreshBilling() {
-    if (!root.billingAvailable) {
-      root.clearBilling()
-      return
-    }
-    if (billingScanner.running) return
+    if (!root.billingAvailable) return
     root.billingRefreshing = true
-    billingScanner.command = root.billingCommand(false)
-    billingScanner.running = true
-  }
-
-  function probeCursor() {
-    if (!cursorPresenceProbe.running) cursorPresenceProbe.running = true
+    root.restartProcess(billingScanner, root.billingCommand(false))
   }
 
   function persistSettings(values) {
@@ -364,16 +245,7 @@ BarWidget {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
-  function setShowCursorUsage(on) {
-    var next = on === true
-    if (root.showCursorUsage === next) return
-    root.persistSettings({ showCursorUsage: next })
-    if (next) root.probeCursor()
-    else root.clearCursorUsage()
-  }
-
   function refresh() {
-    // Availability first: no auth → hide and skip the API.
     if (root.grokAvailable) root.refreshing = true
     if (root.billingAvailable) root.billingRefreshing = true
     root.probeGrok()
@@ -391,17 +263,6 @@ BarWidget {
     usageScanner.running = true
   }
 
-  function refreshCursorUsage() {
-    if (!root.cursorAvailable) {
-      root.clearCursorUsage()
-      return
-    }
-    if (cursorUsageScanner.running) return
-    root.cursorRefreshing = true
-    cursorUsageScanner.command = root.cursorScannerCommand(false)
-    cursorUsageScanner.running = true
-  }
-
   function injectPanel() {
     var target = panelLoader.item
     if (!target) return
@@ -409,10 +270,6 @@ BarWidget {
     if ("settings" in target) target.settings = root.settings
     if ("anchorItem" in target) target.anchorItem = button
     if ("hostWidget" in target) target.hostWidget = root
-    if ("grokLoginName" in target) target.grokLoginName = root.grokLoginName
-    if ("grokLoginEmail" in target) target.grokLoginEmail = root.grokLoginEmail
-    if ("cursorLoginName" in target) target.cursorLoginName = root.cursorLoginName
-    if ("cursorLoginEmail" in target) target.cursorLoginEmail = root.cursorLoginEmail
   }
 
   function togglePanel() {
@@ -431,13 +288,19 @@ BarWidget {
     if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
   }
 
-  // Missing auth or nothing to report → collapse the slot.
-  visible: grokVisible || cursorVisible
+  visible: grokVisible
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
+  onShowApiBillingChanged: {
+    if (!root.showApiBilling) return
+    Qt.callLater(function() {
+      root.probeBilling()
+      if (root.billingAvailable) root.refreshBilling()
+    })
+  }
 
   IpcHandler {
     target: "codechap.grokbar"
@@ -462,16 +325,11 @@ BarWidget {
 
   Process {
     id: presenceProbe
-    // Signed-in credentials (default or override path). Grok CLI does not
-    // need to be running — usage is fetched from grok.com with the OAuth token.
-    // authPath is argv, never interpolated into a shell program.
     command: root.scannerCommand(true)
     running: false
-
     stdout: StdioCollector {
       onStreamFinished: {
-        var status = text.trim()
-        var available = status === "ready"
+        var available = text.trim() === "ready"
         if (root.grokAvailable !== available)
           root.grokAvailable = available
         if (available) root.refreshUsage()
@@ -484,20 +342,18 @@ BarWidget {
     id: usageScanner
     command: root.scannerCommand()
     running: false
-
     stdout: StdioCollector {
       onStreamFinished: {
-        try {
-          root.applyScan(JSON.parse(text))
-        } catch (e) {
+        var data = root.parseScannerJson(text, "scanner")
+        if (data === undefined)
+          return
+        if (!data)
           root.hasData = false
-          console.warn("codechap.grokbar: bad scanner JSON", e)
-        }
+        else
+          root.applyScan(data)
       }
     }
-
     onExited: root.refreshing = false
-
     stderr: StdioCollector {
       onStreamFinished: if (text.trim() !== "") console.warn("codechap.grokbar", text.trim())
     }
@@ -507,15 +363,11 @@ BarWidget {
     id: billingProbe
     command: root.billingCommand(true)
     running: false
-
     stdout: StdioCollector {
       onStreamFinished: {
-        var status = text.trim()
-        var available = status === "ready"
-        if (root.billingAvailable !== available)
-          root.billingAvailable = available
+        var available = text.trim() === "ready"
+        root.billingAvailable = available
         if (available) root.refreshBilling()
-        else root.clearBilling()
       }
     }
   }
@@ -524,69 +376,20 @@ BarWidget {
     id: billingScanner
     command: root.billingCommand(false)
     running: false
-
     stdout: StdioCollector {
       onStreamFinished: {
-        try {
-          root.applyBilling(JSON.parse(text))
-        } catch (e) {
-          root.billingHasData = false
-          console.warn("codechap.grokbar: bad billing JSON", e)
-        }
+        var data = root.parseScannerJson(text, "billing")
+        if (data)
+          root.applyBilling(data)
       }
     }
-
     onExited: root.billingRefreshing = false
-
     stderr: StdioCollector {
       onStreamFinished: if (text.trim() !== "") console.warn("codechap.grokbar billing", text.trim())
     }
   }
 
-  Process {
-    id: cursorPresenceProbe
-    // X-login Cursor session only. --probe never calls the usage API.
-    command: root.cursorScannerCommand(true)
-    running: false
-
-    stdout: StdioCollector {
-      onStreamFinished: {
-        var status = text.trim()
-        var available = status === "ready"
-        if (root.cursorAvailable !== available)
-          root.cursorAvailable = available
-        if (available) root.refreshCursorUsage()
-        else root.clearCursorUsage()
-      }
-    }
-  }
-
-  Process {
-    id: cursorUsageScanner
-    command: root.cursorScannerCommand(false)
-    running: false
-
-    stdout: StdioCollector {
-      onStreamFinished: {
-        try {
-          root.applyCursorScan(JSON.parse(text))
-        } catch (e) {
-          root.cursorHasData = false
-          console.warn("codechap.grokbar: bad cursor scanner JSON", e)
-        }
-      }
-    }
-
-    onExited: root.cursorRefreshing = false
-
-    stderr: StdioCollector {
-      onStreamFinished: if (text.trim() !== "") console.warn("codechap.grokbar cursor", text.trim())
-    }
-  }
-
   Timer {
-    // Auth file can appear after `grok login` / Cursor X sign-in; keep
-    // presence snappier than the usage API poll.
     interval: 5000
     running: true
     repeat: true
@@ -619,9 +422,8 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     labelVisible: false
-    hasVisualContent: root.grokVisible || root.cursorVisible
+    hasVisualContent: root.grokVisible
     active: root.alarming
-    // Tooltip suppressed because the panel is the detail view.
     tooltipText: ""
     fixedWidth: {
       if (vertical) return Style.bar.iconSlot
@@ -637,101 +439,47 @@ BarWidget {
       id: contentRow
       visible: !button.vertical
       anchors.centerIn: parent
-      spacing: Style.space(8)
+      spacing: Style.space(5)
 
-      Row {
-        id: grokCluster
-        visible: root.grokVisible
-        spacing: Style.space(5)
+      ThemedGrokIcon {
+        anchors.verticalCenter: parent.verticalCenter
+      }
 
-        ThemedGrokIcon {
-          anchors.verticalCenter: parent.verticalCenter
-        }
+      Text {
+        visible: root.showWeeklyUsage && root.primaryText !== ""
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.primaryText
+        color: root.grokAlarming ? button.activeColor : button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        renderType: Text.NativeRendering
+      }
 
-        Text {
-          visible: root.showWeeklyUsage && root.primaryText !== ""
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.primaryText
-          color: root.grokAlarming
-            ? button.activeColor
-            : button.foreground
-          font.family: button.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          renderType: Text.NativeRendering
-        }
-
-        Text {
-          visible: root.showWeeklyUsage && root.resetText !== ""
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.resetText
-          color: root.dim
-          font.family: button.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          renderType: Text.NativeRendering
-        }
-
-        Row {
-          visible: root.showApiBilling && root.billingText !== ""
-          spacing: Style.space(5)
-          anchors.verticalCenter: parent.verticalCenter
-
-          Text {
-            text: root.billingText
-            color: button.foreground
-            font.family: button.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            renderType: Text.NativeRendering
-          }
-
-          Text {
-            text: "API"
-            color: root.dim
-            font.family: button.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            renderType: Text.NativeRendering
-          }
-        }
+      Text {
+        visible: root.showWeeklyUsage && root.resetText !== ""
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.resetText
+        color: root.dim
+        font.family: button.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        renderType: Text.NativeRendering
       }
 
       Row {
-        id: cursorCluster
-        visible: root.cursorVisible
+        visible: root.showApiBilling && root.billingText !== ""
         spacing: Style.space(5)
-
-        ThemedCursorIcon {
-          anchors.verticalCenter: parent.verticalCenter
-        }
+        anchors.verticalCenter: parent.verticalCenter
 
         Text {
-          visible: root.cursorAutoText !== ""
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.cursorAutoText
-          color: root.cursorAutoOverPace && root.cursorAutoDisplay >= root.paceAlarmFloor
-            || root.cursorAutoDisplay >= 0.9
-            ? button.activeColor
-            : button.foreground
+          text: root.billingText
+          color: button.foreground
           font.family: button.fontFamily
           font.pixelSize: Style.font.bodySmall
           renderType: Text.NativeRendering
         }
 
         Text {
-          visible: root.cursorApiText !== ""
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.cursorApiText
-          color: root.cursorApiOverPace && root.cursorApiDisplay >= root.paceAlarmFloor
-            || root.cursorApiDisplay >= 0.9
-            ? button.activeColor
-            : button.foreground
-          font.family: button.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          renderType: Text.NativeRendering
-        }
-
-        Text {
-          visible: root.cursorResetText !== ""
-          anchors.verticalCenter: parent.verticalCenter
-          text: root.cursorResetText
+          text: "API"
           color: root.dim
           font.family: button.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -742,24 +490,15 @@ BarWidget {
 
     ThemedGrokIcon {
       visible: button.vertical && root.grokVisible
-        && !(root.cursorVisible && root.cursorAlarming && !root.grokAlarming)
-      anchors.centerIn: parent
-    }
-
-    ThemedCursorIcon {
-      visible: button.vertical && root.cursorVisible
-        && (!root.grokVisible || (root.cursorAlarming && !root.grokAlarming))
       anchors.centerIn: parent
     }
   }
 
-  // Same optical model as BarIconButton: iconCanvas slot, iconFont size.
   component ThemedGrokIcon: Item {
     width: Style.bar.iconCanvas
     height: Style.bar.iconCanvas
     implicitWidth: width
     implicitHeight: height
-
     readonly property int iconSize: Style.bar.iconFont
 
     Image {
@@ -778,35 +517,6 @@ BarWidget {
     MultiEffect {
       anchors.fill: icon
       source: icon
-      colorization: 1.0
-      colorizationColor: root.foreground
-    }
-  }
-
-  component ThemedCursorIcon: Item {
-    width: Style.bar.iconCanvas
-    height: Style.bar.iconCanvas
-    implicitWidth: width
-    implicitHeight: height
-
-    readonly property int iconSize: Style.bar.iconFont
-
-    Image {
-      id: cursorIcon
-      anchors.centerIn: parent
-      width: parent.iconSize
-      height: parent.iconSize
-      source: root.cursorIconSource
-      sourceSize.width: parent.iconSize * 2
-      sourceSize.height: parent.iconSize * 2
-      fillMode: Image.PreserveAspectFit
-      visible: false
-      layer.enabled: true
-    }
-
-    MultiEffect {
-      anchors.fill: cursorIcon
-      source: cursorIcon
       colorization: 1.0
       colorizationColor: root.foreground
     }

@@ -1,14 +1,12 @@
 //! xAI Management API postpaid invoice preview (API token spend in USD).
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::util::{expand_path, home_dir, http_error_kind};
+use crate::util::{expand_path, home_dir, http_agent, http_error_kind};
 
-const USER_AGENT: &str = "codechap-grokbar/0.1";
 const BASE: &str = "https://management-api.x.ai";
 const VALIDATE_URL: &str = "https://management-api.x.ai/auth/management-keys/validation";
 
@@ -68,9 +66,7 @@ fn key_file_candidates(explicit: Option<PathBuf>) -> Vec<PathBuf> {
     }
     out.push(default_key_file());
     let mut seen = std::collections::HashSet::new();
-    out.into_iter()
-        .filter(|p| seen.insert(p.clone()))
-        .collect()
+    out.into_iter().filter(|p| seen.insert(p.clone())).collect()
 }
 
 pub fn run(probe: bool, key_file: Option<PathBuf>) -> i32 {
@@ -168,22 +164,18 @@ fn load_key(explicit: Option<PathBuf>) -> Result<Option<String>, BillingResult> 
     Ok(None)
 }
 
-fn agent() -> ureq::Agent {
-    ureq::builder()
-        .timeout(Duration::from_secs(20))
-        .user_agent(USER_AGENT)
-        .build()
-}
-
 fn get_json(url: &str, key: &str) -> Result<Value, BillingResult> {
-    match agent()
+    match http_agent()
         .get(url)
         .set("Authorization", &format!("Bearer {key}"))
         .set("Accept", "application/json")
         .call()
     {
         Ok(resp) => resp.into_json().map_err(|_| {
-            BillingResult::status("API bill unavailable", "Could not parse Management API JSON.")
+            BillingResult::status(
+                "API bill unavailable",
+                "Could not parse Management API JSON.",
+            )
         }),
         Err(err) if http_error_kind(&err) == "auth" => Err(BillingResult::status(
             "Management key rejected",

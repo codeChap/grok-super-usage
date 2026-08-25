@@ -80,7 +80,7 @@ Removal deletes the cloned plugin folder. It does not change `~/.grok/auth.json`
 ```sh
 cargo test
 omarchy plugin validate .
-qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml Panel.qml
+qmllint -I "$OMARCHY_PATH/shell" *.qml
 ./install.sh
 ```
 

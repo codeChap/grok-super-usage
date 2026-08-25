@@ -15,12 +15,25 @@ command -v cargo >/dev/null || {
 }
 
 cargo build --release
-install -m 755 "$ROOT/target/release/grokbar" "$ROOT/grokbar"
+
+install_bin() {
+  local src="$1" dest="$2"
+  if install -m 755 "$src" "$dest" 2>/dev/null; then
+    return 0
+  fi
+  # Scanner may already be mapped by omarchy-shell; replace via rename.
+  local tmp="${dest}.new.$$"
+  cp "$src" "$tmp"
+  chmod 755 "$tmp"
+  mv -f "$tmp" "$dest"
+}
+
+install_bin "$ROOT/target/release/grokbar" "$ROOT/grokbar"
 
 if [[ "$ROOT" != "$DEST" ]]; then
   mkdir -p "$DEST/assets"
-  install -m 755 "$ROOT/grokbar" "$DEST/grokbar"
-  cp -a "$ROOT/BarWidget.qml" "$ROOT/Panel.qml" "$ROOT/manifest.json" "$DEST/"
+  install_bin "$ROOT/grokbar" "$DEST/grokbar"
+  cp -a "$ROOT"/*.qml "$ROOT/manifest.json" "$DEST/"
   cp -a "$ROOT/assets/." "$DEST/assets/"
   [[ -f "$ROOT/LICENSE" ]] && cp -a "$ROOT/LICENSE" "$DEST/LICENSE"
   echo "Installed ${ID} -> ${DEST}"

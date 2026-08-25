@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::{Map, Value};
@@ -7,11 +6,10 @@ use serde_json::{Map, Value};
 use crate::proto::parse_credits_config;
 use crate::scan::{emit, ScanResult};
 use crate::util::{
-    atomic_write_json, decode_jwt, expand_path, home_dir, http_error_kind, http_status, parse_iso,
-    plain_text, to_iso,
+    account_display_name, atomic_write_json, decode_jwt, expand_path, home_dir, http_agent,
+    http_error_kind, http_status, parse_iso, plain_text, to_iso,
 };
 
-const USER_AGENT: &str = "codechap-grokbar/0.1";
 const CREDITS_URL: &str = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
 const SETTINGS_URL: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const USER_URL: &str = "https://cli-chat-proxy.grok.com/v1/user";
@@ -64,13 +62,6 @@ pub fn run(probe: bool, auth: Option<PathBuf>) -> i32 {
     }
 }
 
-fn agent() -> ureq::Agent {
-    ureq::builder()
-        .timeout(Duration::from_secs(20))
-        .user_agent(USER_AGENT)
-        .build()
-}
-
 fn load_auth(path: &Path) -> Result<Option<Creds>, ScanResult> {
     if !path.is_file() {
         return Ok(None);
@@ -94,6 +85,49 @@ fn load_auth(path: &Path) -> Result<Option<Creds>, ScanResult> {
         ));
     }
 
+    let Some((scope, entry)) = pick_auth_entry(obj) else {
+        return Err(ScanResult::status(
+            "Sign in to Grok",
+            "No access token in ~/.grok/auth.json. Run `grok login`.",
+        ));
+    };
+    let token = entry_token(&entry);
+    if token.is_empty() {
+        return Err(ScanResult::status(
+            "Sign in to Grok",
+            "No access token in ~/.grok/auth.json. Run `grok login`.",
+        ));
+    }
+    Ok(Some(Creds {
+        scope,
+        refresh_token: entry_field(&entry, "refresh_token"),
+        expires_at: entry_field(&entry, "expires_at"),
+        client_id: entry_field(&entry, "oidc_client_id"),
+        email: entry_field(&entry, "email"),
+        token,
+        auth_path: path.to_path_buf(),
+        auth_data: data,
+    }))
+}
+
+fn entry_field(entry: &Value, key: &str) -> String {
+    entry
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn entry_token(entry: &Value) -> String {
+    entry
+        .get("key")
+        .and_then(Value::as_str)
+        .or_else(|| entry.get("access_token").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn pick_auth_entry(obj: &Map<String, Value>) -> Option<(String, Value)> {
     let mut preferred = Vec::new();
     let mut others = Vec::new();
     for (scope, entry) in obj {
@@ -120,50 +154,7 @@ fn load_auth(path: &Path) -> Result<Option<Creds>, ScanResult> {
         }
     }
     preferred.append(&mut others);
-    let Some((scope, entry)) = preferred.into_iter().next() else {
-        return Err(ScanResult::status(
-            "Sign in to Grok",
-            "No access token in ~/.grok/auth.json. Run `grok login`.",
-        ));
-    };
-    let token = entry
-        .get("key")
-        .and_then(Value::as_str)
-        .or_else(|| entry.get("access_token").and_then(Value::as_str))
-        .unwrap_or("")
-        .to_string();
-    if token.is_empty() {
-        return Err(ScanResult::status(
-            "Sign in to Grok",
-            "No access token in ~/.grok/auth.json. Run `grok login`.",
-        ));
-    }
-    Ok(Some(Creds {
-        scope,
-        refresh_token: entry
-            .get("refresh_token")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        expires_at: entry
-            .get("expires_at")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        client_id: entry
-            .get("oidc_client_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        email: entry
-            .get("email")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        token,
-        auth_path: path.to_path_buf(),
-        auth_data: data,
-    }))
+    preferred.into_iter().next()
 }
 
 fn token_is_fresh(creds: &Creds) -> bool {
@@ -203,7 +194,7 @@ fn refresh_token(creds: &mut Creds) -> Result<(), ScanResult> {
             "Grok session expired. Run `grok login` again.",
         ));
     }
-    let response = agent()
+    let response = http_agent()
         .post(TOKEN_URL)
         .set("Accept", "application/json")
         .send_form(&[
@@ -277,8 +268,27 @@ fn auth_headers(req: ureq::Request, token: &str, content_type: Option<&str>) -> 
     req
 }
 
+fn scan_http_fail(err: ureq::Error, labeled: &str) -> (String, ScanResult) {
+    if http_error_kind(&err) == "auth" {
+        return (
+            "auth".into(),
+            ScanResult::status(
+                "Sign in to Grok",
+                "Grok session expired. Run `grok login` again.",
+            ),
+        );
+    }
+    let help = http_status(&err)
+        .map(|s| format!("{labeled} returned HTTP {s}"))
+        .unwrap_or_else(|| "Network error while loading usage.".into());
+    (
+        http_error_kind(&err).into(),
+        ScanResult::status("Grok limits unavailable", &help),
+    )
+}
+
 fn http_get_json(url: &str, token: &str) -> Result<Value, (String, ScanResult)> {
-    match auth_headers(agent().get(url), token, None).call() {
+    match auth_headers(http_agent().get(url), token, None).call() {
         Ok(resp) => resp.into_json().map_err(|_| {
             (
                 "parse".into(),
@@ -288,29 +298,14 @@ fn http_get_json(url: &str, token: &str) -> Result<Value, (String, ScanResult)> 
                 ),
             )
         }),
-        Err(err) if http_error_kind(&err) == "auth" => Err((
-            "auth".into(),
-            ScanResult::status(
-                "Sign in to Grok",
-                "Grok session expired. Run `grok login` again.",
-            ),
-        )),
-        Err(err) => {
-            let help = http_status(&err)
-                .map(|s| format!("Settings API returned HTTP {s}"))
-                .unwrap_or_else(|| "Network error while loading usage.".into());
-            Err((
-                http_error_kind(&err).into(),
-                ScanResult::status("Grok limits unavailable", &help),
-            ))
-        }
+        Err(err) => Err(scan_http_fail(err, "Settings API")),
     }
 }
 
 fn fetch_weekly(token: &str) -> Result<crate::proto::CreditsConfig, (String, ScanResult)> {
     let body = [0u8, 0, 0, 0, 0];
     let response = auth_headers(
-        agent().post(CREDITS_URL),
+        http_agent().post(CREDITS_URL),
         token,
         Some("application/grpc-web+proto"),
     )
@@ -331,24 +326,7 @@ fn fetch_weekly(token: &str) -> Result<crate::proto::CreditsConfig, (String, Sca
             })?;
             buf
         }
-        Err(err) if http_error_kind(&err) == "auth" => {
-            return Err((
-                "auth".into(),
-                ScanResult::status(
-                    "Sign in to Grok",
-                    "Grok session expired. Run `grok login` again.",
-                ),
-            ));
-        }
-        Err(err) => {
-            let help = http_status(&err)
-                .map(|s| format!("Credits API returned HTTP {s}"))
-                .unwrap_or_else(|| "Network error while loading usage.".into());
-            return Err((
-                http_error_kind(&err).into(),
-                ScanResult::status("Grok limits unavailable", &help),
-            ));
-        }
+        Err(err) => return Err(scan_http_fail(err, "Credits API")),
     };
 
     parse_credits_config(&raw).ok_or_else(|| {
@@ -407,32 +385,6 @@ fn jwt_tier_fallback(token: &str) -> String {
         Some(5) => "SuperGrok Heavy".into(),
         _ => String::new(),
     }
-}
-
-fn account_display_name(payload: &Value) -> String {
-    if let Some(name) = payload.get("name").and_then(Value::as_str) {
-        let name = name.trim();
-        if !name.is_empty() {
-            return name.to_string();
-        }
-    }
-    let first = payload
-        .get("firstName")
-        .or_else(|| payload.get("given_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let last = payload
-        .get("lastName")
-        .or_else(|| payload.get("family_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    [first, last]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn fetch_account_profile(token: &str) -> Result<Value, (String, ScanResult)> {
@@ -544,4 +496,31 @@ fn scan(creds: &mut Creds) -> i32 {
         categories: weekly.categories,
         ..ScanResult::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefers_xai_scope_and_skips_empty_tokens() {
+        let obj = serde_json::json!({
+            "https://other.example/oidc": {"key": "other-token"},
+            "https://auth.x.ai/user": {"key": "xai-token", "email": "a@b.c"},
+            "empty": {"key": ""}
+        });
+        let (scope, entry) = pick_auth_entry(obj.as_object().unwrap()).unwrap();
+        assert_eq!(scope, "https://auth.x.ai/user");
+        assert_eq!(entry_token(&entry), "xai-token");
+        assert_eq!(entry_field(&entry, "email"), "a@b.c");
+    }
+
+    #[test]
+    fn accepts_access_token_when_key_missing() {
+        let obj = serde_json::json!({
+            "https://auth.x.ai/user": {"access_token": "from-access"}
+        });
+        let (_, entry) = pick_auth_entry(obj.as_object().unwrap()).unwrap();
+        assert_eq!(entry_token(&entry), "from-access");
+    }
 }
