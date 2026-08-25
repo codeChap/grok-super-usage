@@ -1,0 +1,8 @@
+/target
+/grokbar
+*.swp
+.idea
+.env
+*.key
+auth.json
+XAI-MGMT-KEY.txt

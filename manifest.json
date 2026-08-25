@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "codechap.grokbar",
+  "name": "Grokbar",
+  "version": "1.0.0",
+  "author": "Derrick Egersdorfer",
+  "license": "MIT",
+  "description": "SuperGrok weekly pool on the bar, plus xAI API invoice spend.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Grokbar",
+    "description": "Bar widget with SuperGrok weekly pool. Scanner is a Rust binary.",
+    "category": "AI",
+    "aliases": [
+      "grokbar"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 300,
+      "showWeeklyUsage": true,
+      "showApiBilling": true,
+      "paceAlarm": false,
+      "paceAlarmFloor": 0.15,
+      "authPath": "",
+      "managementKeyPath": ""
+    },
+    "schema": [
+      {
+        "key": "showWeeklyUsage",
+        "type": "boolean",
+        "label": "Show weekly usage",
+        "description": "Show weekly percent and reset on the bar. The click panel always shows the full breakdown.",
+        "defaultValue": true
+      },
+      {
+        "key": "showApiBilling",
+        "type": "boolean",
+        "label": "Show API billing",
+        "description": "Show the API invoice amount on the bar. The click panel always shows the bill.",
+        "defaultValue": true
+      },
+      {
+        "key": "paceAlarm",
+        "type": "boolean",
+        "label": "Pace warning",
+        "description": "Turn the bar red when weekly usage is ahead of an even burn through the week.",
+        "defaultValue": false
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 30,
+        "max": 3600,
+        "step": 30,
+        "defaultValue": 300
+      },
+      {
+        "key": "paceAlarmFloor",
+        "type": "number",
+        "label": "Pace alarm floor",
+        "description": "Do not paint the chip urgent for even-burn over-pace until used percent reaches this fraction (0–1). 0.15 = 15%. Set 0 to match original grokbar (red at 3% in hour 1).",
+        "min": 0,
+        "max": 1,
+        "step": 0.05,
+        "defaultValue": 0.15
+      },
+      {
+        "key": "authPath",
+        "type": "path",
+        "label": "Grok auth.json",
+        "defaultValue": "",
+        "description": "Optional. Defaults to ~/.grok/auth.json."
+      },
+      {
+        "key": "managementKeyPath",
+        "type": "path",
+        "label": "xAI management key file",
+        "defaultValue": "",
+        "description": "Optional. Defaults to ~/dev/XAI-MGMT-KEY.txt or env XAI_MANAGEMENT_KEY. Team-scoped Management API key from console.x.ai — not an inference key."
+      }
+    ]
+  }
+}
