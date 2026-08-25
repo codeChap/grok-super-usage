@@ -61,7 +61,7 @@ Column {
 
   Text {
     width: parent.width
-    text: "Key or path to file with key"
+    text: "Path to a chmod 600 key file. Pasting a key writes it to a private file in this plugin folder; the path is what gets saved."
     color: form.dim
     font.family: form.fontFamily
     font.pixelSize: Style.font.caption
@@ -71,7 +71,11 @@ Column {
   TextField {
     width: parent.width
     text: form.managementKeyPath
-    placeholderText: "~/dev/XAI-MGMT-KEY.txt or xai-…"
+    placeholderText: "~/dev/XAI-MGMT-KEY.txt"
+    password: {
+      var t = String(text || "").trim()
+      return t.indexOf("xai-") === 0 || t.indexOf("xai_") === 0
+    }
     foreground: form.foreground
     font.family: form.fontFamily
     font.pixelSize: Style.font.body

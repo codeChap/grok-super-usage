@@ -7,7 +7,7 @@ use crate::proto::parse_credits_config;
 use crate::scan::{emit, ScanResult};
 use crate::util::{
     account_display_name, atomic_write_json, decode_jwt, expand_path, home_dir, http_agent,
-    http_error_kind, http_status, parse_iso, plain_text, to_iso,
+    http_error_kind, http_status, lock_exclusive, parse_iso, plain_text, to_iso,
 };
 
 const CREDITS_URL: &str = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
@@ -32,7 +32,7 @@ pub fn run(probe: bool, auth: Option<PathBuf>) -> i32 {
     match load_auth(&auth_path) {
         Ok(Some(mut creds)) => {
             if probe {
-                println!("ready");
+                println!("present");
                 return 0;
             }
             match ensure_token(&mut creds) {
@@ -53,7 +53,7 @@ pub fn run(probe: bool, auth: Option<PathBuf>) -> i32 {
         }
         Err(result) => {
             if probe {
-                println!("absent");
+                println!("unreadable");
                 0
             } else {
                 emit(&result)
@@ -159,13 +159,17 @@ fn pick_auth_entry(obj: &Map<String, Value>) -> Option<(String, Value)> {
 
 fn token_is_fresh(creds: &Creds) -> bool {
     let Some(exp) = parse_iso(&creds.expires_at) else {
-        return true;
+        return false;
     };
     exp > Utc::now() + ChronoDuration::seconds(120)
 }
 
 fn save_auth(creds: &Creds) {
-    let mut data = creds.auth_data.clone();
+    let _lock = lock_exclusive(&creds.auth_path).ok();
+    let mut data = std::fs::read_to_string(&creds.auth_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| creds.auth_data.clone());
     let entry = data
         .as_object_mut()
         .and_then(|obj| obj.get_mut(&creds.scope))
@@ -250,10 +254,18 @@ fn refresh_token(creds: &mut Creds) -> Result<(), ScanResult> {
 
 fn ensure_token(creds: &mut Creds) -> Result<(), ScanResult> {
     if token_is_fresh(creds) {
-        Ok(())
-    } else {
-        refresh_token(creds)
+        return Ok(());
     }
+    if creds.refresh_token.trim().is_empty() {
+        if creds.token.trim().is_empty() {
+            return Err(ScanResult::status(
+                "Sign in to Grok",
+                "Grok session expired. Run `grok login` again.",
+            ));
+        }
+        return Ok(());
+    }
+    refresh_token(creds)
 }
 
 fn auth_headers(req: ureq::Request, token: &str, content_type: Option<&str>) -> ureq::Request {
@@ -329,6 +341,29 @@ fn fetch_weekly(token: &str) -> Result<crate::proto::CreditsConfig, (String, Sca
         Err(err) => return Err(scan_http_fail(err, "Credits API")),
     };
 
+    if let Some((code, message)) = crate::proto::grpc_web_status(&raw) {
+        if code == 16 || code == 7 {
+            return Err((
+                "auth".into(),
+                ScanResult::status(
+                    "Sign in to Grok",
+                    "Grok session expired. Run `grok login` again.",
+                ),
+            ));
+        }
+        if code != 0 {
+            let help = if message.is_empty() {
+                format!("Credits API grpc-status {code}")
+            } else {
+                format!("Credits API grpc-status {code}: {message}")
+            };
+            return Err((
+                "http".into(),
+                ScanResult::status("Grok limits unavailable", &help),
+            ));
+        }
+    }
+
     parse_credits_config(&raw).ok_or_else(|| {
         (
             "parse".into(),
@@ -365,6 +400,7 @@ fn fetch_tier_label(token: &str) -> Result<String, (String, ScanResult)> {
 }
 
 fn jwt_tier_fallback(token: &str) -> String {
+    // Unverified JWT claims, display only.
     let Some(payload) = decode_jwt(token) else {
         return String::new();
     };
@@ -522,5 +558,20 @@ mod tests {
         });
         let (_, entry) = pick_auth_entry(obj.as_object().unwrap()).unwrap();
         assert_eq!(entry_token(&entry), "from-access");
+    }
+
+    #[test]
+    fn missing_expiry_is_not_fresh() {
+        let creds = Creds {
+            scope: String::new(),
+            token: "t".into(),
+            refresh_token: String::new(),
+            expires_at: String::new(),
+            client_id: String::new(),
+            email: String::new(),
+            auth_path: PathBuf::from("/tmp/x"),
+            auth_data: serde_json::json!({}),
+        };
+        assert!(!token_is_fresh(&creds));
     }
 }

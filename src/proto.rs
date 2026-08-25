@@ -60,7 +60,12 @@ pub fn parse_credits_config(raw: &[u8]) -> Option<CreditsConfig> {
 
     let mut percent_candidates: Vec<(Vec<u32>, f32, usize)> = all_fixed
         .iter()
-        .filter(|(path, value, _)| path.last() == Some(&1) && (0.0..=100.0).contains(value))
+        .filter(|(path, value, _)| {
+            path.first() == Some(&1)
+                && path.last() == Some(&1)
+                && !path.contains(&7)
+                && (0.0..=100.0).contains(value)
+        })
         .cloned()
         .collect();
     percent_candidates.sort_by_key(|(path, _, order)| (path.len(), *order));
@@ -69,7 +74,7 @@ pub fn parse_credits_config(raw: &[u8]) -> Option<CreditsConfig> {
     let now_sec = Utc::now().timestamp() as u64;
     let ts_fields: Vec<(Vec<u32>, u64)> = all_varint
         .iter()
-        .filter(|(_, v)| (1_700_000_000..=2_100_000_000).contains(v))
+        .filter(|(_, v)| looks_like_unix_secs(*v, now_sec))
         .cloned()
         .collect();
     let future: Vec<(Vec<u32>, u64)> = ts_fields
@@ -118,6 +123,10 @@ pub fn parse_credits_config(raw: &[u8]) -> Option<CreditsConfig> {
     if used_percent.is_none() && all_fixed.is_empty() && resets_at_sec.is_some() && has_usage_period
     {
         used_percent = Some(0.0);
+    }
+
+    if used_percent.is_some() && resets_at_sec.is_none() && !has_usage_period {
+        used_percent = None;
     }
 
     let used_percent = used_percent?;
@@ -193,6 +202,49 @@ fn category_order(type_id: i32) -> u8 {
     }
 }
 
+fn looks_like_unix_secs(value: u64, now: u64) -> bool {
+    const MIN: u64 = 1_577_836_800; // 2020-01-01
+    const MAX: u64 = 4_102_444_800; // 2100-01-01
+    (MIN..=MAX).contains(&value) || value.abs_diff(now) <= 10 * 365 * 24 * 3600
+}
+
+/// grpc-status from a gRPC-web trailer frame (HTTP 200 can still be UNAUTHENTICATED).
+pub fn grpc_web_status(raw: &[u8]) -> Option<(u32, String)> {
+    let mut i = 0;
+    while i + 5 <= raw.len() {
+        let flags = raw[i];
+        let length = u32::from_be_bytes(raw[i + 1..i + 5].try_into().ok()?) as usize;
+        let start = i + 5;
+        let end = start.checked_add(length)?;
+        if end > raw.len() {
+            return None;
+        }
+        if flags & 0x80 != 0 {
+            let text = String::from_utf8_lossy(&raw[start..end]);
+            let mut code = 0u32;
+            let mut message = String::new();
+            for line in text.split(|c| c == '\n' || c == '\r') {
+                let line = line.trim();
+                if let Some(rest) = line
+                    .strip_prefix("grpc-status:")
+                    .or_else(|| line.strip_prefix("Grpc-Status:"))
+                {
+                    code = rest.trim().parse().unwrap_or(0);
+                }
+                if let Some(rest) = line
+                    .strip_prefix("grpc-message:")
+                    .or_else(|| line.strip_prefix("Grpc-Message:"))
+                {
+                    message = rest.trim().to_string();
+                }
+            }
+            return Some((code, message));
+        }
+        i = end;
+    }
+    None
+}
+
 fn grpc_web_data_frames(raw: &[u8]) -> Option<Vec<Vec<u8>>> {
     let mut frames = Vec::new();
     let mut i = 0;
@@ -244,12 +296,10 @@ fn scan_protobuf(buf: &[u8], depth: usize, path: &[u32]) -> Scan {
     let mut order = 0;
 
     while index < buf.len() {
-        let field_start = index;
         let (key, next) = read_varint(buf, index);
         index = next;
         let Some(key) = key.filter(|k| *k != 0) else {
-            index = field_start + 1;
-            continue;
+            break;
         };
         let field_number = (key >> 3) as u32;
         let wire_type = (key & 0x07) as u32;
@@ -263,7 +313,7 @@ fn scan_protobuf(buf: &[u8], depth: usize, path: &[u32]) -> Scan {
                 if let Some(value) = value {
                     varints.push((field_path, value));
                 } else {
-                    index = field_start + 1;
+                    break;
                 }
             }
             1 => {
@@ -276,12 +326,10 @@ fn scan_protobuf(buf: &[u8], depth: usize, path: &[u32]) -> Scan {
                 let (length, next) = read_varint(buf, index);
                 index = next;
                 let Some(length) = length.map(|n| n as usize) else {
-                    index = field_start + 1;
-                    continue;
+                    break;
                 };
                 if index + length > buf.len() {
-                    index = field_start + 1;
-                    continue;
+                    break;
                 }
                 let nested = &buf[index..index + length];
                 if field_path.len() == 2 && field_path[0] == 1 && field_path[1] == 7 {
@@ -316,15 +364,15 @@ fn scan_protobuf(buf: &[u8], depth: usize, path: &[u32]) -> Scan {
                 if index + 4 > buf.len() {
                     break;
                 }
-                let bits = u32::from_le_bytes(buf[index..index + 4].try_into().unwrap());
+                let mut bits = [0u8; 4];
+                bits.copy_from_slice(&buf[index..index + 4]);
+                let bits = u32::from_le_bytes(bits);
                 let value = f32::from_bits(bits);
                 fixed32.push((field_path, value, order));
                 order += 1;
                 index += 4;
             }
-            _ => {
-                index = field_start + 1;
-            }
+            _ => break,
         }
     }
 
@@ -416,5 +464,16 @@ mod tests {
         assert_eq!(parsed.categories[2].percent, 0.0);
         assert!(parsed.reset_iso.contains("T"));
         assert!(parsed.period_start_iso.contains("T"));
+    }
+
+    #[test]
+    fn reads_grpc_web_trailer_status() {
+        let mut trailer = b"grpc-status: 16\r\ngrpc-message: expired\r\n".to_vec();
+        let mut raw = vec![0x80];
+        raw.extend_from_slice(&(trailer.len() as u32).to_be_bytes());
+        raw.append(&mut trailer);
+        let (code, msg) = grpc_web_status(&raw).expect("trailer");
+        assert_eq!(code, 16);
+        assert_eq!(msg, "expired");
     }
 }

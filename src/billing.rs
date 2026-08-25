@@ -1,11 +1,15 @@
 //! xAI Management API postpaid invoice preview (API token spend in USD).
 
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::util::{expand_path, home_dir, http_agent, http_error_kind};
+use crate::util::{
+    atomic_write_secret, expand_path, file_group_or_world_readable, home_dir, http_agent,
+    http_error_kind, looks_like_management_key, path_segment,
+};
 
 const BASE: &str = "https://management-api.x.ai";
 const VALIDATE_URL: &str = "https://management-api.x.ai/auth/management-keys/validation";
@@ -50,56 +54,75 @@ pub fn default_key_file() -> PathBuf {
     home_dir().join("dev/XAI-MGMT-KEY.txt")
 }
 
-fn key_file_candidates(explicit: Option<PathBuf>) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(path) = explicit {
-        let path = expand_path(Some(path.as_path()), default_key_file());
-        if !path.as_os_str().is_empty() {
-            out.push(path);
-        }
-    }
-    if let Ok(env_path) = std::env::var("XAI_MANAGEMENT_KEY_FILE") {
-        let trimmed = env_path.trim();
-        if !trimmed.is_empty() {
-            out.push(expand_path(Some(Path::new(trimmed)), default_key_file()));
-        }
-    }
-    out.push(default_key_file());
-    let mut seen = std::collections::HashSet::new();
-    out.into_iter().filter(|p| seen.insert(p.clone())).collect()
+pub fn default_store_path() -> PathBuf {
+    home_dir().join(".config/omarchy/plugins/codechap.grokbar/management.key")
+}
+
+#[derive(Debug)]
+struct LoadedKey {
+    key: String,
+    warning: String,
 }
 
 pub fn run(probe: bool, key_file: Option<PathBuf>) -> i32 {
-    let key = match load_key(key_file) {
-        Ok(Some(key)) => key,
+    match load_key(key_file) {
         Ok(None) => {
             if probe {
                 println!("absent");
                 return 0;
             }
-            return emit(&BillingResult::status(
+            emit(&BillingResult::status(
                 "Add a management key",
-                "Put an xAI Management API key (console.x.ai) in ~/dev/XAI-MGMT-KEY.txt, or set managementKeyPath.",
-            ));
+                "Put a team-scoped Management API key in a chmod 600 file and set its path in Settings, or export XAI_MANAGEMENT_KEY.",
+            ))
         }
         Err(err) => {
             if probe {
-                println!("absent");
+                println!("unreadable");
                 return 0;
             }
-            return emit(&err);
+            emit(&err)
         }
-    };
-
-    if probe {
-        println!("ready");
-        return 0;
+        Ok(Some(loaded)) => {
+            if probe {
+                println!("present");
+                return 0;
+            }
+            match fetch_preview(&loaded.key) {
+                Ok(mut result) => {
+                    if result.auth_help_text.is_empty() {
+                        result.auth_help_text = loaded.warning;
+                    }
+                    emit(&result)
+                }
+                Err(err) => emit(&err),
+            }
+        }
     }
+}
 
-    match fetch_preview(&key) {
-        Ok(result) => emit(&result),
-        Err(err) => emit(&err),
+pub fn store_key(out: Option<PathBuf>) -> i32 {
+    let mut raw = String::new();
+    if let Err(err) = std::io::stdin().lock().read_line(&mut raw) {
+        eprintln!("grokbar: could not read key from stdin: {err}");
+        return 1;
     }
+    let key = raw.trim();
+    if !looks_like_management_key(key) {
+        eprintln!("grokbar: stdin was not an xAI management key");
+        return 1;
+    }
+    let path = expand_path(out.as_deref(), default_store_path());
+    if looks_like_management_key(&path.to_string_lossy()) {
+        eprintln!("grokbar: --out must be a file path");
+        return 1;
+    }
+    if let Err(err) = atomic_write_secret(&path, format!("{key}\n").as_bytes()) {
+        eprintln!("grokbar: could not write key file: {err}");
+        return 1;
+    }
+    println!("{}", path.display());
+    0
 }
 
 fn emit(result: &BillingResult) -> i32 {
@@ -115,53 +138,75 @@ fn emit(result: &BillingResult) -> i32 {
     }
 }
 
-fn looks_like_key(value: &str) -> bool {
-    let text = value.trim();
-    text.starts_with("xai-") || text.starts_with("xai_")
-}
-
-fn load_key(explicit: Option<PathBuf>) -> Result<Option<String>, BillingResult> {
+fn load_key(explicit: Option<PathBuf>) -> Result<Option<LoadedKey>, BillingResult> {
+    if let Some(raw) = explicit.as_ref() {
+        let text = raw.to_string_lossy();
+        if looks_like_management_key(&text) {
+            return Err(BillingResult::status(
+                "Pass a key file, not the key",
+                "Do not put the management key on the command line. Write it to a chmod 600 file and pass --key-file, or export XAI_MANAGEMENT_KEY.",
+            ));
+        }
+        let path = expand_path(Some(raw.as_path()), default_key_file());
+        return read_key_file(&path).map(Some);
+    }
     if let Ok(env) = std::env::var("XAI_MANAGEMENT_KEY") {
         let key = env.trim().to_string();
         if !key.is_empty() {
-            return Ok(Some(key));
+            return Ok(Some(LoadedKey {
+                key,
+                warning: String::new(),
+            }));
         }
     }
-    if let Some(raw) = explicit.as_ref() {
-        let text = raw.to_string_lossy();
-        if looks_like_key(&text) {
-            return Ok(Some(text.trim().to_string()));
+    if let Ok(env_path) = std::env::var("XAI_MANAGEMENT_KEY_FILE") {
+        let trimmed = env_path.trim();
+        if !trimmed.is_empty() {
+            let path = expand_path(Some(Path::new(trimmed)), default_key_file());
+            return read_key_file(&path).map(Some);
         }
     }
-    let mut last_err = None;
-    for path in key_file_candidates(explicit) {
-        if !path.is_file() {
-            continue;
-        }
-        match std::fs::read_to_string(&path) {
-            Ok(raw) => {
-                let key = raw
-                    .lines()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty() && !line.starts_with('#'))
-                    .unwrap_or("")
-                    .to_string();
-                if !key.is_empty() {
-                    return Ok(Some(key));
-                }
-            }
-            Err(_) => {
-                last_err = Some(BillingResult::status(
-                    "Management key unreadable",
-                    "Could not read the management key file.",
-                ));
-            }
-        }
-    }
-    if let Some(err) = last_err {
-        return Err(err);
+    let default = default_key_file();
+    if default.is_file() {
+        return read_key_file(&default).map(Some);
     }
     Ok(None)
+}
+
+fn read_key_file(path: &Path) -> Result<LoadedKey, BillingResult> {
+    if !path.is_file() {
+        return Err(BillingResult::status(
+            "Management key file missing",
+            &format!("No key file at {}.", path.display()),
+        ));
+    }
+    let raw = std::fs::read_to_string(path).map_err(|_| {
+        BillingResult::status(
+            "Management key unreadable",
+            "Could not read the management key file.",
+        )
+    })?;
+    let key = raw
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))
+        .unwrap_or("")
+        .to_string();
+    if key.is_empty() {
+        return Err(BillingResult::status(
+            "Management key file empty",
+            "The management key file has no key line.",
+        ));
+    }
+    let warning = if file_group_or_world_readable(path) {
+        format!(
+            "Key file {} is group- or world-readable. chmod 600 it.",
+            path.display()
+        )
+    } else {
+        String::new()
+    };
+    Ok(LoadedKey { key, warning })
 }
 
 fn get_json(url: &str, key: &str) -> Result<Value, BillingResult> {
@@ -237,7 +282,10 @@ fn cents_from(value: &Value) -> Option<i64> {
 
 fn fetch_preview(key: &str) -> Result<BillingResult, BillingResult> {
     let team = resolve_team(key)?;
-    let url = format!("{BASE}/v1/billing/teams/{team}/postpaid/invoice/preview");
+    let url = format!(
+        "{BASE}/v1/billing/teams/{}/postpaid/invoice/preview",
+        path_segment(&team)
+    );
     let payload = get_json(&url, key)?;
     let core = payload
         .get("coreInvoice")
@@ -290,9 +338,15 @@ mod tests {
     }
 
     #[test]
-    fn detects_inline_management_keys() {
-        assert!(looks_like_key("xai-mgmt-abc"));
-        assert!(!looks_like_key("~/dev/XAI-MGMT-KEY.txt"));
-        assert!(!looks_like_key("/home/user/XAI-MGMT-KEY.txt"));
+    fn refuses_inline_key_as_key_file_path() {
+        let err =
+            load_key(Some(PathBuf::from("xai-abcdefghijklmnopqrstuvwxyz012345"))).unwrap_err();
+        assert!(err.usage_status_text.contains("file"));
+    }
+
+    #[test]
+    fn explicit_missing_file_does_not_fall_through() {
+        let err = load_key(Some(PathBuf::from("/no/such/grokbar-key-file"))).unwrap_err();
+        assert!(err.usage_status_text.contains("missing"));
     }
 }

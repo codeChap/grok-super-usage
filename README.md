@@ -31,11 +31,13 @@ Weekly percent comes from grok.com `GetGrokCreditsConfig` using `~/.grok/auth.js
 
 ### API billing (optional)
 
-A **team-scoped Management API key** from [console.x.ai](https://console.x.ai) (not an inference key). Either:
+A **team-scoped Management API key** from [console.x.ai](https://console.x.ai) (not an inference key). Prefer a `chmod 600` file:
 
-- put the key in `~/dev/XAI-MGMT-KEY.txt` (`chmod 600`), or
-- paste the key or a path in **Settings** (cog), or
-- `export XAI_MANAGEMENT_KEY=...`
+- `~/dev/XAI-MGMT-KEY.txt`, or
+- a path in **Settings** (cog), or
+- `export XAI_MANAGEMENT_KEY=...` (the key itself, not on the command line)
+
+Pasting a key in Settings writes `management.key` next to the plugin (mode 600) and stores **that path** only. The key is never put on `ps` argv and is not saved in `shell.json`.
 
 Spend is the current postpaid invoice preview (`amountAfterVat`).
 
@@ -71,8 +73,8 @@ Removal deletes the cloned plugin folder. It does not change `~/.grok/auth.json`
 
 ## Privacy
 
-- SuperGrok: reads local `~/.grok/auth.json`, may refresh the OIDC token in that file.
-- API billing: reads a management key from a file, env, or the settings field. Prefer a `chmod 600` file; a pasted key is stored in `~/.config/omarchy/shell.json`.
+- SuperGrok: reads local `~/.grok/auth.json`, may refresh the OIDC token in that file (flock + merge so it does not clobber a concurrent `grok login`).
+- API billing: reads a management key from a chmod 600 file or `XAI_MANAGEMENT_KEY`. Settings store a **path**, never the key.
 - Tokens are not logged. This plugin does not send credentials to third parties; it only calls grok.com and `management-api.x.ai`.
 
 ## Develop

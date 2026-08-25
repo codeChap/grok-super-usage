@@ -84,7 +84,7 @@
         "type": "path",
         "label": "xAI management key file",
         "defaultValue": "",
-        "description": "Optional. Defaults to ~/dev/XAI-MGMT-KEY.txt or env XAI_MANAGEMENT_KEY. Team-scoped Management API key from console.x.ai — not an inference key."
+        "description": "Path to a chmod 600 file with a team-scoped Management API key from console.x.ai. Do not paste the key into shell.json. Pasting a key in the panel writes a private file and stores that path."
       }
     ]
   }

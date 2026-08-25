@@ -450,16 +450,25 @@ Panel {
               spacing: Style.space(12)
 
               Repeater {
-                model: ["Grok Build", "Chat", "Imagine"]
+                model: [
+                  { title: "Grok Build", type: 2 },
+                  { title: "Chat", type: 4 },
+                  { title: "Imagine", type: 5 }
+                ]
 
                 Row {
-                  required property string modelData
+                  required property var modelData
                   required property int index
                   readonly property real pct: {
-                    var item = root.productLimits[index]
-                    var p = Number(item && item.percent)
-                    if (!isFinite(p) || p < 0) return 0
-                    return p
+                    var want = Number(modelData && modelData.type)
+                    var segs = root.productLimits || []
+                    for (var i = 0; i < segs.length; i++) {
+                      if (Number(segs[i] && segs[i].type) !== want) continue
+                      var p = Number(segs[i].percent)
+                      if (!isFinite(p) || p < 0) return 0
+                      return p
+                    }
+                    return 0
                   }
                   spacing: Style.space(5)
 
@@ -476,7 +485,7 @@ Panel {
 
                   Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: modelData + " " + Math.round(pct * 100) + "%"
+                    text: String(modelData.title || "") + " " + Math.round(pct * 100) + "%"
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption

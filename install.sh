@@ -42,5 +42,5 @@ else
 fi
 
 if command -v omarchy >/dev/null; then
-  omarchy plugin validate "$ROOT" || true
+  omarchy plugin validate "$ROOT"
 fi

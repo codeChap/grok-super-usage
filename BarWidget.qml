@@ -66,10 +66,12 @@ BarWidget {
     if (!isFinite(v)) return 0.15
     return Math.max(0, Math.min(1, v))
   }
+  // Red when used >= 90%, or (paceAlarm on AND ahead of even-burn AND used >= floor).
   readonly property bool grokAlarming: displayPercent >= 0.9
     || (paceAlarm && overPace && displayPercent >= paceAlarmFloor)
   readonly property bool alarming: grokAlarming
-  readonly property bool grokVisible: grokAvailable && hasData
+  readonly property bool grokVisible: hasData
+  readonly property bool chipVisible: hasData || billingHasData
   readonly property string primaryText: displayPercent >= 0 ? Math.round(displayPercent * 100) + "%" : ""
   readonly property string resetText: {
     if (resetAt === "") return ""
@@ -79,10 +81,27 @@ BarWidget {
   readonly property string billingText: root.billingHasData && root.billingLabel !== ""
     ? root.billingLabel : ""
 
-  readonly property string scannerPath: String(Qt.resolvedUrl("grokbar")).replace("file://", "")
+  readonly property string scannerPath: root.fileUrlToPath(Qt.resolvedUrl("grokbar"))
+  readonly property string pluginKeyPath: root.fileUrlToPath(Qt.resolvedUrl("management.key"))
   readonly property url iconSource: Qt.resolvedUrl("assets/grok.svg")
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
+
+  function fileUrlToPath(url) {
+    var text = String(url || "")
+    if (text.indexOf("file://") === 0) {
+      text = text.slice(7)
+      if (text.indexOf("localhost/") === 0)
+        text = text.slice(9)
+      else if (text.charAt(0) !== "/") {
+        var slash = text.indexOf("/")
+        if (slash >= 0) text = text.slice(slash)
+      }
+      try { text = decodeURIComponent(text) } catch (e) {}
+      return text
+    }
+    return text
+  }
 
   function resolvePath(value) {
     var text = String(value || "").trim()
@@ -96,7 +115,19 @@ BarWidget {
 
   function looksLikeManagementKey(value) {
     var text = String(value || "").trim()
+    if (text.length < 20 || text.length > 256) return false
+    if (text.indexOf("/") >= 0 || text.indexOf("\\") >= 0
+        || text.indexOf(".") >= 0 || text.indexOf("~") >= 0)
+      return false
+    if (/\s/.test(text)) return false
     return text.indexOf("xai-") === 0 || text.indexOf("xai_") === 0
+  }
+
+  function probeStatus(text) {
+    var t = String(text || "").trim()
+    if (t === "present" || t === "ready") return "present"
+    if (t === "unreadable" || t === "absent") return t
+    return ""
   }
 
   function scannerCommand(probe) {
@@ -116,10 +147,22 @@ BarWidget {
     var raw = String(root.setting("managementKeyPath", "") || "").trim()
     if (raw === "")
       return command
-    var keyFile = root.looksLikeManagementKey(raw) ? raw : root.resolvePath(raw)
+    if (root.looksLikeManagementKey(raw)) {
+      root.stashPastedKey(raw)
+      return command
+    }
+    var keyFile = root.resolvePath(raw)
     if (keyFile !== "")
       command.push("--key-file", keyFile)
     return command
+  }
+
+  function stashPastedKey(key) {
+    if (!key || storeKeyProc.running)
+      return
+    storeKeyProc._pending = key
+    storeKeyProc.command = [root.scannerPath, "store-key", "--out", root.pluginKeyPath]
+    storeKeyProc.running = true
   }
 
   function formatBarDuration(ms) {
@@ -177,37 +220,34 @@ BarWidget {
 
   function parseScannerJson(text, label) {
     var raw = String(text || "").trim()
-    if (raw === "" || raw === "ready" || raw === "absent")
-      return undefined
+    if (!raw)
+      return null
     if (raw.charAt(0) !== "{" && raw.charAt(0) !== "[") {
-      console.warn("codechap.grokbar: unexpected " + label + " output", raw.slice(0, 120))
-      return undefined
+      console.warn("codechap.grokbar: unexpected " + label + " output (" + raw.length + " bytes)")
+      return null
     }
     try {
       return JSON.parse(raw)
     } catch (e) {
-      console.warn("codechap.grokbar: bad " + label + " JSON", e, raw.slice(0, 120))
+      console.warn("codechap.grokbar: bad " + label + " JSON (" + raw.length + " bytes)")
       return null
     }
   }
 
-  function restartProcess(proc, command) {
+  function startIfIdle(proc, command) {
     if (!proc) return
-    if (proc.running)
-      proc.running = false
     if (command)
       proc.command = command
-    Qt.callLater(function() {
-      if (proc) proc.running = true
-    })
+    if (!proc.running)
+      proc.running = true
   }
 
   function probeGrok() {
-    root.restartProcess(presenceProbe, root.scannerCommand(true))
+    root.startIfIdle(presenceProbe, root.scannerCommand(true))
   }
 
   function probeBilling() {
-    root.restartProcess(billingProbe, root.billingCommand(true))
+    root.startIfIdle(billingProbe, root.billingCommand(true))
   }
 
   function applyBilling(data) {
@@ -233,13 +273,24 @@ BarWidget {
   function refreshBilling() {
     if (!root.billingAvailable) return
     root.billingRefreshing = true
-    root.restartProcess(billingScanner, root.billingCommand(false))
+    root.startIfIdle(billingScanner, root.billingCommand(false))
   }
 
   function persistSettings(values) {
+    var next = values || {}
+    if (next.managementKeyPath !== undefined) {
+      var raw = String(next.managementKeyPath || "").trim()
+      if (root.looksLikeManagementKey(raw)) {
+        root.stashPastedKey(raw)
+        delete next.managementKeyPath
+      }
+    }
+    var empty = true
+    for (var check in next) { empty = false; break }
+    if (empty) return
     var entry = { id: root.moduleName }
     for (var existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
-    for (var key in values) entry[key] = values[key]
+    for (var key in next) entry[key] = next[key]
     root.settings = entry
     if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
       root.bar.shell.updateEntryInline(root.moduleName, entry)
@@ -288,12 +339,27 @@ BarWidget {
     if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
   }
 
-  visible: grokVisible
+  visible: chipVisible
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  Component.onCompleted: {
+    var raw = String(root.setting("managementKeyPath", "") || "").trim()
+    if (root.looksLikeManagementKey(raw))
+      root.stashPastedKey(raw)
+  }
+
   onBarChanged: injectPanel()
-  onSettingsChanged: injectPanel()
+  onSettingsChanged: {
+    injectPanel()
+    var raw = String(root.setting("managementKeyPath", "") || "").trim()
+    if (root.looksLikeManagementKey(raw))
+      root.stashPastedKey(raw)
+    Qt.callLater(function() {
+      root.probeGrok()
+      root.probeBilling()
+    })
+  }
   onShowApiBillingChanged: {
     if (!root.showApiBilling) return
     Qt.callLater(function() {
@@ -329,11 +395,16 @@ BarWidget {
     running: false
     stdout: StdioCollector {
       onStreamFinished: {
-        var available = text.trim() === "ready"
-        if (root.grokAvailable !== available)
-          root.grokAvailable = available
-        if (available) root.refreshUsage()
-        else root.clearUsage()
+        var status = root.probeStatus(text)
+        if (status === "") return
+        if (status === "present") {
+          root.grokAvailable = true
+          root.refreshUsage()
+          return
+        }
+        if (status === "unreadable") return
+        root.grokAvailable = false
+        root.clearUsage()
       }
     }
   }
@@ -345,17 +416,14 @@ BarWidget {
     stdout: StdioCollector {
       onStreamFinished: {
         var data = root.parseScannerJson(text, "scanner")
-        if (data === undefined)
-          return
-        if (!data)
-          root.hasData = false
-        else
+        if (data)
           root.applyScan(data)
       }
     }
     onExited: root.refreshing = false
     stderr: StdioCollector {
-      onStreamFinished: if (text.trim() !== "") console.warn("codechap.grokbar", text.trim())
+      onStreamFinished: if (text.trim() !== "")
+        console.warn("codechap.grokbar scanner stderr (" + text.length + " bytes)")
     }
   }
 
@@ -365,9 +433,15 @@ BarWidget {
     running: false
     stdout: StdioCollector {
       onStreamFinished: {
-        var available = text.trim() === "ready"
-        root.billingAvailable = available
-        if (available) root.refreshBilling()
+        var status = root.probeStatus(text)
+        if (status === "") return
+        if (status === "present") {
+          root.billingAvailable = true
+          root.refreshBilling()
+          return
+        }
+        if (status === "unreadable") return
+        root.billingAvailable = false
       }
     }
   }
@@ -385,13 +459,38 @@ BarWidget {
     }
     onExited: root.billingRefreshing = false
     stderr: StdioCollector {
-      onStreamFinished: if (text.trim() !== "") console.warn("codechap.grokbar billing", text.trim())
+      onStreamFinished: if (text.trim() !== "")
+        console.warn("codechap.grokbar billing stderr (" + text.length + " bytes)")
+    }
+  }
+
+  Process {
+    id: storeKeyProc
+    running: false
+    stdinEnabled: true
+    property string _pending: ""
+    onStarted: {
+      if (_pending !== "") {
+        write(_pending + "\n")
+        _pending = ""
+      }
+    }
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var path = text.trim()
+        if (path.indexOf("/") === 0)
+          root.persistSettings({ managementKeyPath: path })
+      }
+    }
+    stderr: StdioCollector {
+      onStreamFinished: if (text.trim() !== "")
+        console.warn("codechap.grokbar store-key failed")
     }
   }
 
   Timer {
     interval: 5000
-    running: true
+    running: !root.grokAvailable
     repeat: true
     triggeredOnStart: true
     onTriggered: {
@@ -405,8 +504,8 @@ BarWidget {
     running: root.grokAvailable || root.billingAvailable
     repeat: true
     onTriggered: {
-      root.refreshUsage()
-      root.refreshBilling()
+      root.probeGrok()
+      root.probeBilling()
     }
   }
 
@@ -422,7 +521,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     labelVisible: false
-    hasVisualContent: root.grokVisible
+    hasVisualContent: root.chipVisible
     active: root.alarming
     tooltipText: ""
     fixedWidth: {
@@ -489,7 +588,7 @@ BarWidget {
     }
 
     ThemedGrokIcon {
-      visible: button.vertical && root.grokVisible
+      visible: button.vertical && root.chipVisible
       anchors.centerIn: parent
     }
   }

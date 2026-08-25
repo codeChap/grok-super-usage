@@ -1,13 +1,14 @@
-use std::fs;
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 
-const USER_AGENT: &str = "codechap-grokbar/0.1";
+pub const USER_AGENT: &str = concat!("codechap-grokbar/", env!("CARGO_PKG_VERSION"));
 
 const RESOURCE_MARKUP: &[&str] = &[
     "<img", "<image", "<object", "<embed", "<iframe", "<frame", "<link", "<meta", "<base",
@@ -42,8 +43,7 @@ pub fn plain_text(value: &str, max_len: usize) -> String {
     if text.is_empty() {
         return String::new();
     }
-    let compact: String = text.to_lowercase().split_whitespace().collect();
-    if RESOURCE_MARKUP.iter().any(|tag| compact.contains(tag)) {
+    if contains_markup_tag(&text) {
         return String::new();
     }
     if text.len() > max_len {
@@ -54,6 +54,81 @@ pub fn plain_text(value: &str, max_len: usize) -> String {
             .to_string()
     } else {
         text
+    }
+}
+
+fn contains_markup_tag(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    let mut rest = lower.as_str();
+    while let Some(i) = rest.find('<') {
+        let after = &rest[i..];
+        if RESOURCE_MARKUP.iter().any(|tag| after.starts_with(tag)) {
+            return true;
+        }
+        rest = &rest[i + 1..];
+    }
+    false
+}
+
+/// True only for a raw xAI key, never for a path or filename.
+pub fn looks_like_management_key(value: &str) -> bool {
+    let text = value.trim();
+    if text.len() < 20 || text.len() > 256 {
+        return false;
+    }
+    if text.contains('/') || text.contains('\\') || text.contains('.') || text.contains('~') {
+        return false;
+    }
+    if text.chars().any(char::is_whitespace) {
+        return false;
+    }
+    text.starts_with("xai-") || text.starts_with("xai_")
+}
+
+pub fn path_segment(value: &str) -> String {
+    let mut out = String::new();
+    for b in value.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+pub fn file_group_or_world_readable(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|meta| meta.permissions().mode() & 0o077 != 0)
+        .unwrap_or(false)
+}
+
+pub struct FileLock(fs::File);
+
+pub fn lock_exclusive(path: &Path) -> io::Result<FileLock> {
+    let lock_path = path.with_extension("lock");
+    if let Some(dir) = lock_path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .open(&lock_path)?;
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(FileLock(file))
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        unsafe {
+            libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
+        }
     }
 }
 
@@ -71,18 +146,29 @@ pub fn parse_iso(value: &str) -> Option<DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-pub fn atomic_write_json(path: &Path, value: &Value) -> std::io::Result<()> {
+pub fn atomic_write_json(path: &Path, value: &Value) -> io::Result<()> {
+    let json = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
+    let mut payload = json;
+    payload.push(b'\n');
+    atomic_write_secret(path, &payload)
+}
+
+pub fn atomic_write_secret(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(
-        ".auth.{}.{}.tmp",
+        ".secret.{}.{}.tmp",
         std::process::id(),
         Utc::now().timestamp_nanos_opt().unwrap_or(0)
     ));
     {
-        let mut file = fs::File::create(&tmp)?;
-        serde_json::to_writer_pretty(&mut file, value).map_err(std::io::Error::other)?;
-        file.write_all(b"\n")?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
     }
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
@@ -90,6 +176,7 @@ pub fn atomic_write_json(path: &Path, value: &Value) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Unverified JWT payload decode for display fallbacks only — never authorization.
 pub fn decode_jwt(token: &str) -> Option<Value> {
     let text = token.trim();
     if text.is_empty() {
@@ -159,6 +246,25 @@ mod tests {
     fn strips_img_markup() {
         assert_eq!(plain_text("<img src=x>", 80), "");
         assert_eq!(plain_text("SuperGrok Heavy", 80), "SuperGrok Heavy");
+        assert_eq!(plain_text("score < 10", 80), "score < 10");
+    }
+
+    #[test]
+    fn management_key_is_not_a_path() {
+        assert!(looks_like_management_key(
+            "xai-abcdefghijklmnopqrstuvwxyz012345"
+        ));
+        assert!(!looks_like_management_key("xai-mgmt-abc"));
+        assert!(!looks_like_management_key("xai-mgmt.txt"));
+        assert!(!looks_like_management_key("~/dev/XAI-MGMT-KEY.txt"));
+        assert!(!looks_like_management_key("/home/user/XAI-MGMT-KEY.txt"));
+    }
+
+    #[test]
+    fn encodes_path_segments() {
+        assert_eq!(path_segment("abc-1"), "abc-1");
+        assert_eq!(path_segment("a/b"), "a%2Fb");
+        assert_eq!(path_segment("a b"), "a%20b");
     }
 
     #[test]
