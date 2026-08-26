@@ -4,6 +4,8 @@ SuperGrok weekly usage and xAI API invoice spend for the [Omarchy](https://omarc
 
 Click the chip for Build / Chat / Imagine, reset time, and this cycle’s API bill. A cog in the panel opens settings.
 
+![Grok Super Usage panel showing weekly percent, product slices, and API bill](preview.png)
+
 This is **subscription quota + Management API postpaid spend**. It is not xAI prepaid Management balance by itself, and it is not Cursor usage.
 
 ## Install
