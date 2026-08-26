@@ -93,6 +93,8 @@ qmllint -I "$OMARCHY_PATH/shell" *.qml
 ./install.sh
 ```
 
+GitHub Actions (the **Actions** tab) runs `cargo test --locked` and a release build on every push to `main` and on every pull request. That is CI. Same commands as above, on a clean Ubuntu machine GitHub starts for you. QML lint stays local because it needs the Omarchy shell.
+
 ## Credits
 
 Panel layout started from [rlimberger/grokbar-omarchy](https://github.com/rlimberger/grokbar-omarchy) (MIT). Scanner is Rust.
