@@ -11,7 +11,7 @@ This is **subscription quota + Management API postpaid spend**. It is not xAI pr
 Needs Omarchy Quattro (Quickshell plugins), Rust (`cargo` / `rustc`), and Python is not required.
 
 ```sh
-omarchy plugin add https://github.com/codeChap/omarchy-grokbar.git --enable
+omarchy plugin add https://github.com/codeChap/grok-super-usage.git --enable
 cd ~/.config/omarchy/plugins/codechap.grok-super-usage
 ./install.sh
 omarchy restart shell
