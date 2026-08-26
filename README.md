@@ -1,4 +1,4 @@
-# Grokbar
+# Grok Super Usage
 
 SuperGrok weekly usage and xAI API invoice spend for the [Omarchy](https://omarchy.org/) bar.
 
@@ -11,13 +11,20 @@ This is **subscription quota + Management API postpaid spend**. It is not xAI pr
 Needs Omarchy Quattro (Quickshell plugins), Rust (`cargo` / `rustc`), and Python is not required.
 
 ```sh
-omarchy plugin add https://github.com/codeChap/omarchy-grokbar.git --enable
-cd ~/.config/omarchy/plugins/codechap.grokbar
+omarchy plugin add https://github.com/codeChap/grok-super-usage.git --enable
+cd ~/.config/omarchy/plugins/codechap.grok-super-usage
 ./install.sh
 omarchy restart shell
 ```
 
-`install.sh` builds the `grokbar` scanner and places it next to the QML. `omarchy plugin add` only clones the repo; the binary is not prebuilt.
+`install.sh` builds the `grok-super-usage` scanner and places it next to the QML. `omarchy plugin add` only clones the repo; the binary is not prebuilt.
+
+If you still have the old `codechap.grokbar` plugin, remove it first:
+
+```sh
+omarchy plugin disable codechap.grokbar
+omarchy plugin remove codechap.grokbar --yes
+```
 
 ### SuperGrok weekly
 
@@ -53,7 +60,7 @@ The panel always shows weekly + API. Bar visibility of each is optional.
 ## Configure
 
 ```sh
-omarchy bar move codechap.grokbar --section right
+omarchy bar move codechap.grok-super-usage --section right
 ```
 
 | Setting | Default | Bar effect |
@@ -65,8 +72,8 @@ omarchy bar move codechap.grokbar --section right
 ## Remove
 
 ```sh
-omarchy plugin disable codechap.grokbar
-omarchy plugin remove codechap.grokbar --yes
+omarchy plugin disable codechap.grok-super-usage
+omarchy plugin remove codechap.grok-super-usage --yes
 ```
 
 Removal deletes the cloned plugin folder. It does not change `~/.grok/auth.json` or your management key file.

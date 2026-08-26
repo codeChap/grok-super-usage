@@ -4,8 +4,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "codechap.grokbar"
-  ipcTarget: "codechap.grokbar"
+  moduleName: "codechap.grok-super-usage"
+  ipcTarget: "codechap.grok-super-usage"
   manageIpc: false
 
   property var anchorItem: null

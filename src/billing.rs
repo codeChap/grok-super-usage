@@ -55,7 +55,7 @@ pub fn default_key_file() -> PathBuf {
 }
 
 pub fn default_store_path() -> PathBuf {
-    home_dir().join(".config/omarchy/plugins/codechap.grokbar/management.key")
+    home_dir().join(".config/omarchy/plugins/codechap.grok-super-usage/management.key")
 }
 
 #[derive(Debug)]
@@ -104,21 +104,21 @@ pub fn run(probe: bool, key_file: Option<PathBuf>) -> i32 {
 pub fn store_key(out: Option<PathBuf>) -> i32 {
     let mut raw = String::new();
     if let Err(err) = std::io::stdin().lock().read_line(&mut raw) {
-        eprintln!("grokbar: could not read key from stdin: {err}");
+        eprintln!("grok-super-usage: could not read key from stdin: {err}");
         return 1;
     }
     let key = raw.trim();
     if !looks_like_management_key(key) {
-        eprintln!("grokbar: stdin was not an xAI management key");
+        eprintln!("grok-super-usage: stdin was not an xAI management key");
         return 1;
     }
     let path = expand_path(out.as_deref(), default_store_path());
     if looks_like_management_key(&path.to_string_lossy()) {
-        eprintln!("grokbar: --out must be a file path");
+        eprintln!("grok-super-usage: --out must be a file path");
         return 1;
     }
     if let Err(err) = atomic_write_secret(&path, format!("{key}\n").as_bytes()) {
-        eprintln!("grokbar: could not write key file: {err}");
+        eprintln!("grok-super-usage: could not write key file: {err}");
         return 1;
     }
     println!("{}", path.display());
@@ -132,7 +132,7 @@ fn emit(result: &BillingResult) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("grokbar: billing serialize: {err}");
+            eprintln!("grok-super-usage: billing serialize: {err}");
             1
         }
     }
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn explicit_missing_file_does_not_fall_through() {
-        let err = load_key(Some(PathBuf::from("/no/such/grokbar-key-file"))).unwrap_err();
+        let err = load_key(Some(PathBuf::from("/no/such/grok-super-usage-key-file"))).unwrap_err();
         assert!(err.usage_status_text.contains("missing"));
     }
 }

@@ -12,7 +12,7 @@ use clap::Subcommand;
 
 /// SuperGrok weekly usage and xAI API invoice spend for the Omarchy bar.
 #[derive(Debug, Parser)]
-#[command(name = "grokbar", version, about)]
+#[command(name = "grok-super-usage", version, about)]
 pub struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

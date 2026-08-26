@@ -75,7 +75,7 @@ pub fn emit(result: &ScanResult) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("grokbar: serialize: {err}");
+            eprintln!("grok-super-usage: serialize: {err}");
             1
         }
     }

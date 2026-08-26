@@ -3,12 +3,13 @@ use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 
-pub const USER_AGENT: &str = concat!("codechap-grokbar/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("grok-super-usage/", env!("CARGO_PKG_VERSION"));
 
 const RESOURCE_MARKUP: &[&str] = &[
     "<img", "<image", "<object", "<embed", "<iframe", "<frame", "<link", "<meta", "<base",
@@ -191,10 +192,15 @@ pub fn decode_jwt(token: &str) -> Option<Value> {
 }
 
 pub fn http_agent() -> ureq::Agent {
-    ureq::builder()
-        .timeout(Duration::from_secs(20))
-        .user_agent(USER_AGENT)
-        .build()
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT
+        .get_or_init(|| {
+            ureq::builder()
+                .timeout(Duration::from_secs(20))
+                .user_agent(USER_AGENT)
+                .build()
+        })
+        .clone()
 }
 
 pub fn account_display_name(payload: &Value) -> String {
