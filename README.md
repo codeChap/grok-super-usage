@@ -4,6 +4,8 @@ SuperGrok weekly usage and xAI API invoice spend for the [Omarchy](https://omarc
 
 Click the chip for Build / Chat / Imagine, reset time, and this cycle’s API bill. A cog in the panel opens settings.
 
+![Grok Super Usage panel showing weekly percent, product slices, and API bill](preview.png)
+
 This is **subscription quota + Management API postpaid spend**. It is not xAI prepaid Management balance by itself, and it is not Cursor usage.
 
 ## Install
@@ -92,6 +94,8 @@ omarchy plugin validate .
 qmllint -I "$OMARCHY_PATH/shell" *.qml
 ./install.sh
 ```
+
+GitHub Actions (the **Actions** tab) runs `cargo test --locked` and a release build on every push to `main` and on every pull request. That is CI. Same commands as above, on a clean Ubuntu machine GitHub starts for you. QML lint stays local because it needs the Omarchy shell.
 
 ## Credits
 
