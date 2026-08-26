@@ -8,6 +8,29 @@ Click the chip for Build / Chat / Imagine, reset time, and this cycle’s API bi
 
 This is **subscription quota + Management API postpaid spend**. It is not xAI prepaid Management balance by itself, and it is not Cursor usage.
 
+## Pass this to your AI
+
+Copy the block below into Grok, Claude, or whatever agent you use on this machine.
+
+````
+Install the Omarchy bar plugin Grok Super Usage from https://github.com/codeChap/grok-super-usage.git
+
+This is SuperGrok weekly quota plus optional xAI Management API invoice spend. It is not Cursor usage and not prepaid Management balance.
+
+1. If codechap.grokbar is installed, disable and remove it.
+2. Require Omarchy Quattro and Rust (cargo / rustc). Python is not required.
+3. Run:
+   omarchy plugin add https://github.com/codeChap/grok-super-usage.git --enable
+   cd ~/.config/omarchy/plugins/codechap.grok-super-usage
+   ./install.sh
+   omarchy restart shell
+4. Plugin id is codechap.grok-super-usage. Put it on the right of the bar if it is not already there:
+   omarchy bar move codechap.grok-super-usage --section right
+5. Weekly percent needs `grok login` and ~/.grok/auth.json.
+6. API dollars are optional. Use a team-scoped Management API key from console.x.ai in a chmod 600 file (default ~/dev/XAI-MGMT-KEY.txt) or Settings. Never put the key on the command line or in shell.json. Store a path only.
+7. Do not skip ./install.sh. plugin add only clones. The scanner binary is grok-super-usage next to the QML.
+````
+
 ## Install
 
 Needs Omarchy Quattro (Quickshell plugins), Rust (`cargo` / `rustc`), and Python is not required.
