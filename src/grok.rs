@@ -187,7 +187,7 @@ fn save_auth(creds: &Creds) {
         }
     }
     if let Err(err) = atomic_write_json(&creds.auth_path, &data) {
-        eprintln!("grokbar: could not write auth.json: {err}");
+        eprintln!("grok-super-usage: could not write auth.json: {err}");
     }
 }
 

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-ID="codechap.grokbar"
+ID="codechap.grok-super-usage"
 DEST="${HOME}/.config/omarchy/plugins/${ID}"
 
 cd "$ROOT"
@@ -28,17 +28,17 @@ install_bin() {
   mv -f "$tmp" "$dest"
 }
 
-install_bin "$ROOT/target/release/grokbar" "$ROOT/grokbar"
+install_bin "$ROOT/target/release/grok-super-usage" "$ROOT/grok-super-usage"
 
 if [[ "$ROOT" != "$DEST" ]]; then
   mkdir -p "$DEST/assets"
-  install_bin "$ROOT/grokbar" "$DEST/grokbar"
+  install_bin "$ROOT/grok-super-usage" "$DEST/grok-super-usage"
   cp -a "$ROOT"/*.qml "$ROOT/manifest.json" "$DEST/"
   cp -a "$ROOT/assets/." "$DEST/assets/"
   [[ -f "$ROOT/LICENSE" ]] && cp -a "$ROOT/LICENSE" "$DEST/LICENSE"
   echo "Installed ${ID} -> ${DEST}"
 else
-  echo "Built grokbar in ${ROOT}"
+  echo "Built grok-super-usage in ${ROOT}"
 fi
 
 if command -v omarchy >/dev/null; then

@@ -9,7 +9,7 @@ import qs.Ui
 // Left click toggles the panel; right click refreshes.
 BarWidget {
   id: root
-  moduleName: "codechap.grokbar"
+  moduleName: "codechap.grok-super-usage"
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
@@ -81,7 +81,7 @@ BarWidget {
   readonly property string billingText: root.billingHasData && root.billingLabel !== ""
     ? root.billingLabel : ""
 
-  readonly property string scannerPath: root.fileUrlToPath(Qt.resolvedUrl("grokbar"))
+  readonly property string scannerPath: root.fileUrlToPath(Qt.resolvedUrl("grok-super-usage"))
   readonly property string pluginKeyPath: root.fileUrlToPath(Qt.resolvedUrl("management.key"))
   readonly property url iconSource: Qt.resolvedUrl("assets/grok.svg")
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
@@ -223,13 +223,13 @@ BarWidget {
     if (!raw)
       return null
     if (raw.charAt(0) !== "{" && raw.charAt(0) !== "[") {
-      console.warn("codechap.grokbar: unexpected " + label + " output (" + raw.length + " bytes)")
+      console.warn("codechap.grok-super-usage: unexpected " + label + " output (" + raw.length + " bytes)")
       return null
     }
     try {
       return JSON.parse(raw)
     } catch (e) {
-      console.warn("codechap.grokbar: bad " + label + " JSON (" + raw.length + " bytes)")
+      console.warn("codechap.grok-super-usage: bad " + label + " JSON (" + raw.length + " bytes)")
       return null
     }
   }
@@ -369,7 +369,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "codechap.grokbar"
+    target: "codechap.grok-super-usage"
     function refresh(): string { root.refresh(); return "ok" }
     function open(): void { root.open() }
     function close(): void { root.close() }
@@ -423,7 +423,7 @@ BarWidget {
     onExited: root.refreshing = false
     stderr: StdioCollector {
       onStreamFinished: if (text.trim() !== "")
-        console.warn("codechap.grokbar scanner stderr (" + text.length + " bytes)")
+        console.warn("codechap.grok-super-usage scanner stderr (" + text.length + " bytes)")
     }
   }
 
@@ -460,7 +460,7 @@ BarWidget {
     onExited: root.billingRefreshing = false
     stderr: StdioCollector {
       onStreamFinished: if (text.trim() !== "")
-        console.warn("codechap.grokbar billing stderr (" + text.length + " bytes)")
+        console.warn("codechap.grok-super-usage billing stderr (" + text.length + " bytes)")
     }
   }
 
@@ -484,7 +484,7 @@ BarWidget {
     }
     stderr: StdioCollector {
       onStreamFinished: if (text.trim() !== "")
-        console.warn("codechap.grokbar store-key failed")
+        console.warn("codechap.grok-super-usage store-key failed")
     }
   }
 

@@ -1,5 +1,5 @@
 [package]
-name = "codechap-grokbar"
+name = "grok-super-usage"
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
@@ -8,7 +8,7 @@ authors = ["Derrick Egersdorfer"]
 publish = false
 
 [[bin]]
-name = "grokbar"
+name = "grok-super-usage"
 path = "src/main.rs"
 
 [dependencies]

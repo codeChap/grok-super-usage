@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "codechap.grokbar",
-  "name": "Grokbar",
+  "id": "codechap.grok-super-usage",
+  "name": "Grok Super Usage",
   "version": "1.0.0",
   "author": "Derrick Egersdorfer",
   "license": "MIT",
@@ -14,11 +14,11 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Grokbar",
+    "displayName": "Grok Super Usage",
     "description": "Bar widget with SuperGrok weekly pool. Scanner is a Rust binary.",
     "category": "AI",
     "aliases": [
-      "grokbar"
+      "grok-super-usage"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -66,7 +66,7 @@
         "key": "paceAlarmFloor",
         "type": "number",
         "label": "Pace alarm floor",
-        "description": "Do not paint the chip urgent for even-burn over-pace until used percent reaches this fraction (0–1). 0.15 = 15%. Set 0 to match original grokbar (red at 3% in hour 1).",
+        "description": "Do not paint the chip urgent for even-burn over-pace until used percent reaches this fraction (0–1). 0.15 = 15%. Set 0 to alarm as soon as usage is ahead of even burn.",
         "min": 0,
         "max": 1,
         "step": 0.05,

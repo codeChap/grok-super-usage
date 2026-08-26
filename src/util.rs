@@ -9,7 +9,7 @@ use std::time::Duration;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 
-pub const USER_AGENT: &str = concat!("codechap-grokbar/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("grok-super-usage/", env!("CARGO_PKG_VERSION"));
 
 const RESOURCE_MARKUP: &[&str] = &[
     "<img", "<image", "<object", "<embed", "<iframe", "<frame", "<link", "<meta", "<base",
