@@ -486,19 +486,27 @@ fn scan(creds: &mut Creds) -> i32 {
         Err(err) => return emit(&err),
     };
 
-    let mut tier_label = String::new();
-    if let Ok(tier) = with_auth_retry(creds, fetch_tier_label) {
-        if !tier.is_empty() {
-            tier_label = tier;
-        }
-    }
+    let token = creds.token.clone();
+    let extras = std::thread::scope(|scope| {
+        let tier_h = scope.spawn(|| fetch_tier_label(&token));
+        let profile_h = scope.spawn(|| fetch_account_profile(&token));
+        let subs_h = scope.spawn(|| fetch_subscriptions(&token));
+        (tier_h.join(), profile_h.join(), subs_h.join())
+    });
+
+    let mut tier_label = extras
+        .0
+        .ok()
+        .and_then(Result::ok)
+        .filter(|t| !t.is_empty())
+        .unwrap_or_default();
     if tier_label.is_empty() {
         tier_label = jwt_tier_fallback(&creds.token);
     }
 
     let mut account_email = String::new();
     let mut account_name = String::new();
-    if let Ok(profile) = with_auth_retry(creds, fetch_account_profile) {
+    if let Ok(Ok(profile)) = extras.1 {
         account_email = profile
             .get("email")
             .and_then(Value::as_str)
@@ -513,7 +521,7 @@ fn scan(creds: &mut Creds) -> i32 {
 
     let mut period_end = String::new();
     let mut cancels = false;
-    if let Ok(subs) = with_auth_retry(creds, fetch_subscriptions) {
+    if let Ok(Ok(subs)) = extras.2 {
         (period_end, cancels) = subscription_rebill(&subs);
     }
 
