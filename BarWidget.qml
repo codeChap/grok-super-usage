@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -83,7 +82,6 @@ BarWidget {
 
   readonly property string scannerPath: root.fileUrlToPath(Qt.resolvedUrl("grok-super-usage"))
   readonly property string pluginKeyPath: root.fileUrlToPath(Qt.resolvedUrl("management.key"))
-  readonly property url iconSource: Qt.resolvedUrl("assets/grok.svg")
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
@@ -167,10 +165,12 @@ BarWidget {
 
   function formatBarDuration(ms) {
     if (!(ms > 0)) return "now"
-    var hours = Math.floor(ms / 3600000)
+    var minutes = Math.floor(ms / 60000)
+    var hours = Math.floor(minutes / 60)
     var days = Math.floor(hours / 24)
-    if (days > 0) return days + "d"
-    return Math.max(1, hours) + "h"
+    if (days > 1) return days + "d"
+    if (hours > 1) return hours + "h"
+    return Math.max(1, minutes) + "m"
   }
 
   function parseTimeMs(value) {
@@ -545,18 +545,19 @@ BarWidget {
       }
 
       Text {
+        id: primaryLabel
         visible: root.showWeeklyUsage && root.primaryText !== ""
         anchors.verticalCenter: parent.verticalCenter
         text: root.primaryText
         color: root.grokAlarming ? button.activeColor : button.foreground
         font.family: button.fontFamily
-        font.pixelSize: Style.font.bodySmall
+        font.pixelSize: button.fontSize
         renderType: Text.NativeRendering
       }
 
       Text {
         visible: root.showWeeklyUsage && root.resetText !== ""
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.baseline: primaryLabel.baseline
         text: root.resetText
         color: root.dim
         font.family: button.fontFamily
@@ -570,10 +571,11 @@ BarWidget {
         anchors.verticalCenter: parent.verticalCenter
 
         Text {
+          id: priceLabel
           text: root.billingText
           color: button.foreground
           font.family: button.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: button.fontSize
           renderType: Text.NativeRendering
         }
 
@@ -583,6 +585,7 @@ BarWidget {
           font.family: button.fontFamily
           font.pixelSize: Style.font.bodySmall
           renderType: Text.NativeRendering
+          anchors.baseline: priceLabel.baseline
         }
       }
     }
@@ -593,31 +596,11 @@ BarWidget {
     }
   }
 
-  component ThemedGrokIcon: Item {
+  component ThemedGrokIcon: GrokMark {
     width: Style.bar.iconCanvas
     height: Style.bar.iconCanvas
     implicitWidth: width
     implicitHeight: height
-    readonly property int iconSize: Style.bar.iconFont
-
-    Image {
-      id: icon
-      anchors.centerIn: parent
-      width: parent.iconSize
-      height: parent.iconSize
-      source: root.iconSource
-      sourceSize.width: parent.iconSize * 2
-      sourceSize.height: parent.iconSize * 2
-      fillMode: Image.PreserveAspectFit
-      visible: false
-      layer.enabled: true
-    }
-
-    MultiEffect {
-      anchors.fill: icon
-      source: icon
-      colorization: 1.0
-      colorizationColor: root.foreground
-    }
+    color: "#ffffff"
   }
 }

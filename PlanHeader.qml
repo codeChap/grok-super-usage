@@ -7,7 +7,6 @@ Item {
   property string title: ""
   property string meta: ""
   property real metaOpacity: 0
-  property url iconSource
   property bool settingsOpen: false
   property color foreground: Color.foreground
   property color dim: Color.foreground
@@ -23,14 +22,11 @@ Item {
     anchors.left: parent.left
     anchors.top: parent.top
 
-    Image {
+    GrokMark {
       anchors.centerIn: parent
-      source: hdr.iconSource
       width: Style.font.display
       height: Style.font.display
-      sourceSize.width: Style.font.display * 2
-      sourceSize.height: Style.font.display * 2
-      fillMode: Image.PreserveAspectFit
+      color: "#ffffff"
     }
   }
 

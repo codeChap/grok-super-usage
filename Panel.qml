@@ -142,27 +142,11 @@ Panel {
     ]
   }
 
-  readonly property url iconSource: colorLuminance(surface) >= 0.5
-    ? Qt.resolvedUrl("assets/grok-light.svg")
-    : Qt.resolvedUrl("assets/grok.svg")
-
   function parseTimeMs(value) {
     var text = String(value || "").trim()
     if (text === "") return NaN
     var t = new Date(text).getTime()
     return isFinite(t) ? t : NaN
-  }
-
-  function colorChannelLuminance(value) {
-    var channel = Number(value)
-    if (!isFinite(channel)) return 0
-    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)
-  }
-
-  function colorLuminance(color) {
-    return 0.2126 * colorChannelLuminance(color.r)
-      + 0.7152 * colorChannelLuminance(color.g)
-      + 0.0722 * colorChannelLuminance(color.b)
   }
 
   function parseResetWhen(iso) {
@@ -341,7 +325,6 @@ Panel {
             title: root.settingsOpen ? "Settings" : root.weeklyTitle
             meta: root.settingsOpen ? "api billing" : root.heroMeta
             metaOpacity: root.settingsOpen ? 1 : root.grokMetaOpacity
-            iconSource: root.iconSource
             settingsOpen: root.settingsOpen
             foreground: root.foreground
             dim: root.dim
