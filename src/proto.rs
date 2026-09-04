@@ -26,6 +26,7 @@ pub struct CreditsConfig {
     pub reset_iso: String,
     pub period_start_iso: String,
     pub categories: Vec<Category>,
+    pub prepaid_credits: u64,
 }
 
 struct Scan {
@@ -131,6 +132,14 @@ pub fn parse_credits_config(raw: &[u8]) -> Option<CreditsConfig> {
 
     let used_percent = used_percent?;
 
+    // Prepaid credit balance: proto field path 1.12.1.
+    // Present when the user has switched to credits after hitting the weekly cap.
+    let prepaid_credits = all_varint
+        .iter()
+        .find(|(p, _)| p.as_slice() == [1, 12, 1])
+        .map(|(_, v)| *v)
+        .unwrap_or(0);
+
     let reset_iso = resets_at_sec
         .and_then(|sec| Utc.timestamp_opt(sec as i64, 0).single())
         .map(to_iso)
@@ -187,6 +196,7 @@ pub fn parse_credits_config(raw: &[u8]) -> Option<CreditsConfig> {
         reset_iso,
         period_start_iso,
         categories,
+        prepaid_credits,
     })
 }
 
@@ -475,5 +485,50 @@ mod tests {
         let (code, msg) = grpc_web_status(&raw).expect("trailer");
         assert_eq!(code, 16);
         assert_eq!(msg, "expired");
+    }
+
+    #[test]
+    fn parses_prepaid_credits() {
+        let start = (Utc::now().timestamp() as u64).saturating_sub(3600);
+        let end = start + 7 * 24 * 3600;
+        let mut inner = Vec::new();
+        inner.extend(fixed32_field(1, 100.0));
+        inner.extend(varint_field(6, 1));
+        let mut period_start = Vec::new();
+        period_start.extend(varint_field(1, start));
+        let mut period_end = Vec::new();
+        period_end.extend(varint_field(1, end));
+        inner.extend(len_field(4, &period_start));
+        inner.extend(len_field(5, &period_end));
+        // Prepaid balance: field 12 sub-field 1
+        let mut prepaid = Vec::new();
+        prepaid.extend(varint_field(1, 1492));
+        inner.extend(len_field(12, &prepaid));
+        let msg = len_field(1, &inner);
+        let raw = grpc_frame(&msg);
+
+        let parsed = parse_credits_config(&raw).expect("credits");
+        assert!((parsed.used_fraction - 1.0).abs() < 1e-6);
+        assert_eq!(parsed.prepaid_credits, 1492);
+    }
+
+    #[test]
+    fn zero_prepaid_when_absent() {
+        let start = (Utc::now().timestamp() as u64).saturating_sub(3600);
+        let end = start + 7 * 24 * 3600;
+        let mut inner = Vec::new();
+        inner.extend(fixed32_field(1, 42.0));
+        inner.extend(varint_field(6, 1));
+        let mut period_start = Vec::new();
+        period_start.extend(varint_field(1, start));
+        let mut period_end = Vec::new();
+        period_end.extend(varint_field(1, end));
+        inner.extend(len_field(4, &period_start));
+        inner.extend(len_field(5, &period_end));
+        let msg = len_field(1, &inner);
+        let raw = grpc_frame(&msg);
+
+        let parsed = parse_credits_config(&raw).expect("credits");
+        assert_eq!(parsed.prepaid_credits, 0);
     }
 }

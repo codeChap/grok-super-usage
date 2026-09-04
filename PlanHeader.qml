@@ -12,6 +12,7 @@ Item {
   property color dim: Color.foreground
   property string fontFamily: Style.font.family
   signal settingsClicked()
+  signal consoleClicked()
 
   implicitHeight: Math.max(iconBox.height, titleCol.implicitHeight, cog.implicitHeight)
 
@@ -34,8 +35,8 @@ Item {
     id: titleCol
     anchors.left: iconBox.right
     anchors.leftMargin: Style.space(14)
-    anchors.right: cog.left
-    anchors.rightMargin: Style.space(12)
+    anchors.right: consoleBtn.left
+    anchors.rightMargin: Style.space(8)
     anchors.top: parent.top
     spacing: Style.space(2)
 
@@ -61,6 +62,19 @@ Item {
       font.pixelSize: Style.font.caption
       elide: Text.ElideRight
     }
+  }
+
+  PanelActionButton {
+    id: consoleBtn
+    z: 2
+    anchors.right: cog.left
+    anchors.rightMargin: Style.space(2)
+    anchors.top: parent.top
+    iconText: "󰏌"
+    tooltipText: "xAI Console"
+    foreground: hdr.foreground
+    fontFamily: hdr.fontFamily
+    onClicked: hdr.consoleClicked()
   }
 
   PanelActionButton {

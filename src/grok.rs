@@ -538,6 +538,7 @@ fn scan(creds: &mut Creds) -> i32 {
         subscription_period_end: period_end,
         subscription_cancels_at_end: cancels,
         categories: weekly.categories,
+        prepaid_credits: weekly.prepaid_credits,
         ..ScanResult::default()
     })
 }

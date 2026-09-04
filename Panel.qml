@@ -35,6 +35,8 @@ Panel {
   readonly property string authHelpText: hostWidget ? String(hostWidget.authHelpText || "") : ""
   readonly property var categories: hostWidget && hostWidget.categories ? hostWidget.categories : []
   readonly property double nowMs: hostWidget ? Number(hostWidget.nowMs) : Date.now()
+  readonly property int prepaidCredits: hostWidget ? Number(hostWidget.prepaidCredits) || 0 : 0
+  readonly property bool onCredits: primaryPercent >= 1.0 && prepaidCredits > 0
 
   readonly property bool grokHasData: rawPrimaryPercent >= 0
   readonly property bool billingHasData: hostWidget ? hostWidget.billingHasData === true : false
@@ -127,8 +129,12 @@ Panel {
     if (usageStatusText !== "") return 1
     return grokRebillLabel !== "" ? 1 : 0
   }
-  readonly property string usedLabel: primaryPercent >= 0
-    ? Math.round(primaryPercent * 100) + "% of weekly limit used" : ""
+  readonly property string usedLabel: {
+    if (primaryPercent < 0) return ""
+    var pct = Math.round(primaryPercent * 100) + "% of weekly limit used"
+    if (onCredits) pct += " ($" + (prepaidCredits / 100).toFixed(2) + ")"
+    return pct
+  }
   readonly property string resetsLabel: root.formatResetsLabel(resetAt)
 
   readonly property var segmentPalette: {
@@ -207,6 +213,7 @@ Panel {
   }
 
   function open() {
+    root.settingsOpen = false
     root.controller.show()
     root.refresh()
     Qt.callLater(function() {
@@ -222,7 +229,12 @@ Panel {
     root.controller.hide()
   }
 
-  function openSettings() { root.settingsOpen = true }
+  function openSettings() {
+    setCenterHoverRevealSuppressed(false)
+    root.controller.hide()
+    root.settingsOpen = true
+  }
+
   function closeSettings() { root.settingsOpen = false }
 
   function saveManagementKeyPath(path) {
@@ -247,7 +259,8 @@ Panel {
   }
 
   function toggle() {
-    if (root.opened) close()
+    if (root.settingsOpen) closeSettings()
+    else if (root.opened) close()
     else open()
   }
 
@@ -258,6 +271,16 @@ Panel {
     root.refreshing = true
     hostWidget.refresh()
     Qt.callLater(root.syncRefreshing)
+  }
+
+  function openConsole() {
+    Qt.openUrlExternally("https://console.x.ai/")
+    root.close()
+  }
+
+  function openBilling() {
+    Qt.openUrlExternally("https://grok.com/?_s=billing")
+    root.close()
   }
 
   function switchPanel(direction) {
@@ -298,16 +321,13 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.settingsOpen
-      onActivateRequested: if (!root.settingsOpen) root.refresh()
-      onCloseRequested: root.settingsOpen ? root.closeSettings() : root.close()
-      onTabRequested: function(direction) {
-        if (!root.settingsOpen) root.switchPanel(direction)
-      }
+      onActivateRequested: root.refresh()
+      onCloseRequested: root.close()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
-        if (root.settingsOpen) return
         if (t === "r" || t === "R") root.refresh()
         if (t === "s" || t === "S") root.openSettings()
+        if (t === "c" || t === "C") root.openConsole()
       }
 
       Column {
@@ -316,20 +336,20 @@ Panel {
         spacing: Style.space(12)
 
         Column {
-          visible: root.settingsOpen || root.grokHasData || root.usageStatusText !== ""
+          visible: root.grokHasData || root.usageStatusText !== ""
           width: parent.width
           spacing: Style.space(12)
 
           PlanHeader {
             width: parent.width
-            title: root.settingsOpen ? "Settings" : root.weeklyTitle
-            meta: root.settingsOpen ? "api billing" : root.heroMeta
-            metaOpacity: root.settingsOpen ? 1 : root.grokMetaOpacity
-            settingsOpen: root.settingsOpen
+            title: root.weeklyTitle
+            meta: root.heroMeta
+            metaOpacity: root.grokMetaOpacity
             foreground: root.foreground
             dim: root.dim
             fontFamily: root.fontFamily
-            onSettingsClicked: root.settingsOpen = !root.settingsOpen
+            onSettingsClicked: root.openSettings()
+            onConsoleClicked: root.openConsole()
           }
 
           BorderSurface {
@@ -361,26 +381,9 @@ Panel {
             foreground: root.foreground
           }
 
-          SettingsForm {
-            visible: root.settingsOpen
-            width: parent.width
-            foreground: root.foreground
-            dim: root.dim
-            fontFamily: root.fontFamily
-            showWeeklyUsage: root.showWeeklyUsage
-            showApiBilling: root.showApiBilling
-            paceAlarmEnabled: root.paceAlarmEnabled
-            managementKeyPath: root.managementKeyPath
-            billingHasData: root.billingHasData
-            billingLabel: root.billingLabel
-            billingHelpText: root.billingHelpText
-            onFlagChanged: function(key, on) { root.setFlag(key, on) }
-            onKeyPathCommitted: function(path) { root.saveManagementKeyPath(path) }
-          }
-
           Column {
             id: usageSection
-            visible: !root.settingsOpen && root.primaryPercent >= 0
+            visible: root.primaryPercent >= 0
             width: parent.width
             spacing: Style.space(10)
 
@@ -480,8 +483,7 @@ Panel {
           }
 
           Column {
-            visible: !root.settingsOpen
-              && (root.billingUsedLabel !== "" || root.billingHelpText !== "")
+            visible: root.billingUsedLabel !== "" || root.billingHelpText !== ""
             width: parent.width
             spacing: Style.space(10)
 
@@ -533,7 +535,101 @@ Panel {
             }
           }
         }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(10)
+
+          BorderSurface {
+            width: (parent.width - parent.spacing) / 2
+            implicitHeight: Style.space(40)
+            color: "transparent"
+            borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+            radius: Style.cornerRadius
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.openConsole()
+            }
+
+            Row {
+              anchors.centerIn: parent
+              spacing: Style.space(8)
+
+              Text {
+                text: "󰏌"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.icon
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                text: "xAI Console"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+          }
+
+          BorderSurface {
+            width: (parent.width - parent.spacing) / 2
+            implicitHeight: Style.space(40)
+            color: "transparent"
+            borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+            radius: Style.cornerRadius
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.openBilling()
+            }
+
+            Row {
+              anchors.centerIn: parent
+              spacing: Style.space(8)
+
+              Text {
+                text: "󰋭"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.icon
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                text: "Billing"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+          }
+        }
       }
     }
+  }
+
+  SettingsOverlay {
+    opened: root.settingsOpen
+    foreground: root.foreground
+    dim: root.dim
+    fontFamily: root.fontFamily
+    showWeeklyUsage: root.showWeeklyUsage
+    showApiBilling: root.showApiBilling
+    paceAlarmEnabled: root.paceAlarmEnabled
+    managementKeyPath: root.managementKeyPath
+    billingHasData: root.billingHasData
+    billingLabel: root.billingLabel
+    billingHelpText: root.billingHelpText
+    onClosed: root.closeSettings()
+    onFlagChanged: function(key, on) { root.setFlag(key, on) }
+    onKeyPathCommitted: function(path) { root.saveManagementKeyPath(path) }
   }
 }

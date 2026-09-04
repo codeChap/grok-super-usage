@@ -32,6 +32,7 @@ pub struct ScanResult {
     pub categories: Vec<Category>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub x_login_found: bool,
+    pub prepaid_credits: u64,
 }
 
 impl Default for ScanResult {
@@ -54,6 +55,7 @@ impl Default for ScanResult {
             auth_help_text: String::new(),
             categories: Vec::new(),
             x_login_found: false,
+            prepaid_credits: 0,
         }
     }
 }

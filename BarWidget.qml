@@ -5,7 +5,7 @@ import qs.Commons
 import qs.Ui
 
 // Bar chip: SuperGrok weekly % / reset, plus optional API invoice spend.
-// Left click toggles the panel; right click refreshes.
+// Left click toggles the panel; right click refreshes; middle click settings.
 BarWidget {
   id: root
   moduleName: "codechap.grok-super-usage"
@@ -30,6 +30,7 @@ BarWidget {
   property bool hasData: false
   property bool refreshing: false
   property bool grokAvailable: false
+  property int prepaidCredits: 0
 
   property string billingLabel: ""
   property real billingUsd: -1
@@ -71,7 +72,13 @@ BarWidget {
   readonly property bool alarming: grokAlarming
   readonly property bool grokVisible: hasData
   readonly property bool chipVisible: hasData || billingHasData
-  readonly property string primaryText: displayPercent >= 0 ? Math.round(displayPercent * 100) + "%" : ""
+  readonly property string primaryText: {
+    if (displayPercent < 0) return ""
+    var pct = Math.round(displayPercent * 100) + "%"
+    if (displayPercent >= 1.0 && prepaidCredits > 0)
+      return pct + " ($" + (prepaidCredits / 100).toFixed(2) + ")"
+    return pct
+  }
   readonly property string resetText: {
     if (resetAt === "") return ""
     var ms = new Date(resetAt).getTime() - root.nowMs
@@ -79,6 +86,31 @@ BarWidget {
   }
   readonly property string billingText: root.billingHasData && root.billingLabel !== ""
     ? root.billingLabel : ""
+  readonly property string tooltipText: {
+    var lines = []
+    var title = root.tierLabel !== "" ? root.tierLabel : "Grok"
+    if (root.displayPercent >= 0) {
+      var used = Math.round(root.displayPercent * 100) + "% of weekly limit"
+      if (root.displayPercent >= 1.0 && root.prepaidCredits > 0)
+        used += " · $" + (root.prepaidCredits / 100).toFixed(2) + " prepaid"
+      if (root.resetText !== "") used += " · resets " + root.resetText
+      lines.push(title)
+      lines.push(used)
+    } else if (root.usageStatusText !== "") {
+      lines.push(title)
+      lines.push(root.usageStatusText)
+    } else {
+      lines.push(title)
+    }
+    if (root.billingHasData && root.billingLabel !== "")
+      lines.push(root.billingLabel + " api")
+    else if (root.billingStatusText !== "")
+      lines.push(root.billingStatusText)
+    if (root.refreshing || root.billingRefreshing)
+      lines.push("Refreshing…")
+    lines.push("Left: panel  Right: refresh  Middle: settings")
+    return lines.join("\n")
+  }
 
   readonly property string scannerPath: root.fileUrlToPath(Qt.resolvedUrl("grok-super-usage"))
   readonly property string pluginKeyPath: root.fileUrlToPath(Qt.resolvedUrl("management.key"))
@@ -198,6 +230,7 @@ BarWidget {
     root.usageStatusText = String(data.usageStatusText || "")
     root.authHelpText = String(data.authHelpText || "")
     root.categories = Array.isArray(data.categories) ? data.categories : []
+    root.prepaidCredits = Number(data.prepaidCredits) || 0
     root.hasData = primary >= 0
     root.nowMs = Date.now()
     root.injectPanel()
@@ -215,6 +248,7 @@ BarWidget {
     root.usageStatusText = ""
     root.authHelpText = ""
     root.categories = []
+    root.prepaidCredits = 0
     root.hasData = false
   }
 
@@ -523,15 +557,22 @@ BarWidget {
     labelVisible: false
     hasVisualContent: root.chipVisible
     active: root.alarming
-    tooltipText: ""
+    fontSize: Style.font.body
+    horizontalMargin: 10
+    tooltipText: root.tooltipText
     fixedWidth: {
       if (vertical) return Style.bar.iconSlot
-      return Math.ceil(contentRow.implicitWidth + Style.spaceReal(8.75) * 2)
+      return Math.ceil(contentRow.implicitWidth + scaledHorizontalMargin * 2)
     }
     fixedHeight: vertical ? Style.bar.iconSlot : -1
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.refresh()
-      else root.togglePanel()
+      else if (buttonCode === Qt.MiddleButton) {
+        if (panelLoader.item && panelLoader.item.openSettings)
+          panelLoader.item.openSettings()
+      } else {
+        root.togglePanel()
+      }
     }
 
     Row {
@@ -561,7 +602,7 @@ BarWidget {
         text: root.resetText
         color: root.dim
         font.family: button.fontFamily
-        font.pixelSize: Style.font.bodySmall
+        font.pixelSize: button.fontSize
         renderType: Text.NativeRendering
       }
 
@@ -580,10 +621,10 @@ BarWidget {
         }
 
         Text {
-          text: "API"
+          text: "api"
           color: root.dim
           font.family: button.fontFamily
-          font.pixelSize: Style.font.bodySmall
+          font.pixelSize: button.fontSize
           renderType: Text.NativeRendering
           anchors.baseline: priceLabel.baseline
         }
@@ -597,8 +638,10 @@ BarWidget {
   }
 
   component ThemedGrokIcon: GrokMark {
-    width: Style.bar.iconCanvas
-    height: Style.bar.iconCanvas
+    // Caption-sized: the SVG fills its viewBox, so iconCanvas (16) reads huge
+    // next to 12px bar text and ~10px font glyphs.
+    width: Style.font.caption
+    height: Style.font.caption
     implicitWidth: width
     implicitHeight: height
     color: "#ffffff"
