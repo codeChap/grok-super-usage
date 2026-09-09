@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::util::{
     atomic_write_secret, expand_path, file_group_or_world_readable, home_dir, http_agent,
-    http_error_kind, looks_like_management_key, path_segment,
+    http_error_kind, looks_like_management_key, path_segment, plain_text, read_http_json,
+    LimitedReadError, MAX_HTTP_BODY,
 };
 
 const BASE: &str = "https://management-api.x.ai";
@@ -216,12 +217,17 @@ fn get_json(url: &str, key: &str) -> Result<Value, BillingResult> {
         .set("Accept", "application/json")
         .call()
     {
-        Ok(resp) => resp.into_json().map_err(|_| {
-            BillingResult::status(
+        Ok(resp) => match read_http_json(resp, MAX_HTTP_BODY) {
+            Ok(value) => Ok(value),
+            Err(LimitedReadError::TooLarge) => Err(BillingResult::status(
+                "API bill unavailable",
+                "Management API response was too large.",
+            )),
+            Err(_) => Err(BillingResult::status(
                 "API bill unavailable",
                 "Could not parse Management API JSON.",
-            )
-        }),
+            )),
+        },
         Err(err) if http_error_kind(&err) == "auth" => Err(BillingResult::status(
             "Management key rejected",
             "The management key is invalid or expired. Create a new one at console.x.ai.",
@@ -280,6 +286,15 @@ fn cents_from(value: &Value) -> Option<i64> {
     }
 }
 
+fn billing_period(payload: &Value) -> String {
+    let raw = payload
+        .get("period")
+        .or_else(|| payload.get("billingPeriod"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    plain_text(raw, 80)
+}
+
 fn fetch_preview(key: &str) -> Result<BillingResult, BillingResult> {
     let team = resolve_team(key)?;
     let url = format!(
@@ -310,12 +325,7 @@ fn fetch_preview(key: &str) -> Result<BillingResult, BillingResult> {
         ));
     }
     let usd = cents as f64 / 100.0;
-    let period = payload
-        .get("period")
-        .or_else(|| payload.get("billingPeriod"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+    let period = billing_period(&payload);
     Ok(BillingResult {
         ready: true,
         amount_usd: usd,
@@ -335,6 +345,24 @@ mod tests {
     fn parses_cents_from_number_or_string() {
         assert_eq!(cents_from(&serde_json::json!(6096)), Some(6096));
         assert_eq!(cents_from(&serde_json::json!("6096")), Some(6096));
+    }
+
+    #[test]
+    fn period_is_plain_text() {
+        assert_eq!(
+            billing_period(&serde_json::json!({"period": "Aug 2026"})),
+            "Aug 2026"
+        );
+        assert_eq!(
+            billing_period(&serde_json::json!({
+                "billingPeriod": "<img src=\"http://127.0.0.1/x\">"
+            })),
+            ""
+        );
+        assert_eq!(
+            billing_period(&serde_json::json!({"period": "<image src=x>"})),
+            ""
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -10,6 +10,49 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
 
 pub const USER_AGENT: &str = concat!("grok-super-usage/", env!("CARGO_PKG_VERSION"));
+
+/// Authenticated HTTP bodies (JSON and gRPC-web) must not be read unbounded.
+pub const MAX_HTTP_BODY: u64 = 1_048_576;
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum LimitedReadError {
+    TooLarge,
+    Io(io::Error),
+    Json(serde_json::Error),
+}
+
+/// Read at most `max` bytes. `content_length` is rejected before the body if set and over `max`.
+pub fn read_limited<R: Read>(
+    reader: R,
+    max: u64,
+    content_length: Option<u64>,
+) -> Result<Vec<u8>, LimitedReadError> {
+    if content_length.is_some_and(|n| n > max) {
+        return Err(LimitedReadError::TooLarge);
+    }
+    let mut buf = Vec::new();
+    reader
+        .take(max.saturating_add(1))
+        .read_to_end(&mut buf)
+        .map_err(LimitedReadError::Io)?;
+    if buf.len() as u64 > max {
+        return Err(LimitedReadError::TooLarge);
+    }
+    Ok(buf)
+}
+
+pub fn read_http_body(resp: ureq::Response, max: u64) -> Result<Vec<u8>, LimitedReadError> {
+    let len = resp
+        .header("Content-Length")
+        .and_then(|s| s.parse::<u64>().ok());
+    read_limited(resp.into_reader(), max, len)
+}
+
+pub fn read_http_json(resp: ureq::Response, max: u64) -> Result<Value, LimitedReadError> {
+    let buf = read_http_body(resp, max)?;
+    serde_json::from_slice(&buf).map_err(LimitedReadError::Json)
+}
 
 const RESOURCE_MARKUP: &[&str] = &[
     "<img", "<image", "<object", "<embed", "<iframe", "<frame", "<link", "<meta", "<base",
@@ -251,8 +294,23 @@ mod tests {
     #[test]
     fn strips_img_markup() {
         assert_eq!(plain_text("<img src=x>", 80), "");
+        assert_eq!(plain_text("<IMG SRC=\"http://127.0.0.1/x\">", 80), "");
         assert_eq!(plain_text("SuperGrok Heavy", 80), "SuperGrok Heavy");
         assert_eq!(plain_text("score < 10", 80), "score < 10");
+    }
+
+    #[test]
+    fn rejects_oversize_http_bodies() {
+        assert!(matches!(
+            read_limited(io::empty(), 8, Some(9)),
+            Err(LimitedReadError::TooLarge)
+        ));
+        assert!(matches!(
+            read_limited(io::Cursor::new(vec![0u8; 10]), 8, None),
+            Err(LimitedReadError::TooLarge)
+        ));
+        let at_limit = read_limited(io::Cursor::new(vec![1u8; 8]), 8, Some(8)).unwrap();
+        assert_eq!(at_limit.len(), 8);
     }
 
     #[test]

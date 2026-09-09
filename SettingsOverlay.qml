@@ -114,12 +114,35 @@ PanelWindow {
           onKeyPathCommitted: function(path) { root.keyPathCommitted(path) }
         }
 
-        Text {
+        Item {
           width: parent.width
-          text: "Esc close"
-          color: root.dim
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
+          implicitHeight: Math.max(escClose.implicitHeight, codechapCredit.implicitHeight)
+
+          Text {
+            id: escClose
+            text: "Esc close"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+          }
+
+          Text {
+            id: codechapCredit
+            text: "CodeChap"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: Qt.openUrlExternally("https://x.com/codechap")
+            }
+          }
         }
       }
     }

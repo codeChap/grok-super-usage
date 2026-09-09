@@ -7,7 +7,8 @@ use crate::proto::parse_credits_config;
 use crate::scan::{emit, ScanResult};
 use crate::util::{
     account_display_name, atomic_write_json, decode_jwt, expand_path, home_dir, http_agent,
-    http_error_kind, http_status, lock_exclusive, parse_iso, plain_text, to_iso,
+    http_error_kind, http_status, lock_exclusive, parse_iso, plain_text, read_http_body,
+    read_http_json, to_iso, LimitedReadError, MAX_HTTP_BODY,
 };
 
 const CREDITS_URL: &str = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
@@ -208,9 +209,21 @@ fn refresh_token(creds: &mut Creds) -> Result<(), ScanResult> {
         ]);
 
     let payload: Value = match response {
-        Ok(resp) => resp
-            .into_json()
-            .map_err(|_| ScanResult::status("Grok limits unavailable", "Token refresh failed."))?,
+        Ok(resp) => match read_http_json(resp, MAX_HTTP_BODY) {
+            Ok(value) => value,
+            Err(LimitedReadError::TooLarge) => {
+                return Err(ScanResult::status(
+                    "Grok limits unavailable",
+                    "Token refresh response was too large.",
+                ));
+            }
+            Err(_) => {
+                return Err(ScanResult::status(
+                    "Grok limits unavailable",
+                    "Token refresh failed.",
+                ));
+            }
+        },
         Err(ureq::Error::Status(code, _)) if matches!(code, 400 | 401 | 403) => {
             return Err(ScanResult::status(
                 "Sign in to Grok",
@@ -301,15 +314,23 @@ fn scan_http_fail(err: ureq::Error, labeled: &str) -> (String, ScanResult) {
 
 fn http_get_json(url: &str, token: &str) -> Result<Value, (String, ScanResult)> {
     match auth_headers(http_agent().get(url), token, None).call() {
-        Ok(resp) => resp.into_json().map_err(|_| {
-            (
+        Ok(resp) => match read_http_json(resp, MAX_HTTP_BODY) {
+            Ok(value) => Ok(value),
+            Err(LimitedReadError::TooLarge) => Err((
+                "http".into(),
+                ScanResult::status(
+                    "Grok limits unavailable",
+                    "Usage API response was too large.",
+                ),
+            )),
+            Err(_) => Err((
                 "parse".into(),
                 ScanResult::status(
                     "Grok limits unavailable",
                     "Could not parse settings response.",
                 ),
-            )
-        }),
+            )),
+        },
         Err(err) => Err(scan_http_fail(err, "Settings API")),
     }
 }
@@ -325,19 +346,27 @@ fn fetch_weekly(token: &str) -> Result<crate::proto::CreditsConfig, (String, Sca
     .send_bytes(&body);
 
     let raw = match response {
-        Ok(resp) => {
-            let mut buf = Vec::new();
-            resp.into_reader().read_to_end(&mut buf).map_err(|_| {
-                (
+        Ok(resp) => match read_http_body(resp, MAX_HTTP_BODY) {
+            Ok(buf) => buf,
+            Err(LimitedReadError::TooLarge) => {
+                return Err((
+                    "http".into(),
+                    ScanResult::status(
+                        "Grok limits unavailable",
+                        "Credits API response was too large.",
+                    ),
+                ));
+            }
+            Err(_) => {
+                return Err((
                     "net".into(),
                     ScanResult::status(
                         "Grok limits unavailable",
                         "Network error while loading usage.",
                     ),
-                )
-            })?;
-            buf
-        }
+                ));
+            }
+        },
         Err(err) => return Err(scan_http_fail(err, "Credits API")),
     };
 
@@ -352,10 +381,11 @@ fn fetch_weekly(token: &str) -> Result<crate::proto::CreditsConfig, (String, Sca
             ));
         }
         if code != 0 {
-            let help = if message.is_empty() {
+            let msg = plain_text(&message, 120);
+            let help = if msg.is_empty() {
                 format!("Credits API grpc-status {code}")
             } else {
-                format!("Credits API grpc-status {code}: {message}")
+                format!("Credits API grpc-status {code}: {msg}")
             };
             return Err((
                 "http".into(),
@@ -535,7 +565,7 @@ fn scan(creds: &mut Creds) -> i32 {
         tier_label: plain_text(&tier_label, 80),
         account_name: plain_text(&account_name, 80),
         account_email: plain_text(&account_email, 254),
-        subscription_period_end: period_end,
+        subscription_period_end: plain_text(&period_end, 40),
         subscription_cancels_at_end: cancels,
         categories: weekly.categories,
         prepaid_credits: weekly.prepaid_credits,

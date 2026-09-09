@@ -86,6 +86,7 @@ Column {
     width: parent.width
     visible: form.billingHasData
     text: "Current API bill: " + form.billingLabel
+    textFormat: Text.PlainText
     color: form.dim
     font.family: form.fontFamily
     font.pixelSize: Style.font.caption
@@ -95,6 +96,7 @@ Column {
     width: parent.width
     visible: !form.billingHasData && form.billingHelpText !== ""
     text: form.billingHelpText
+    textFormat: Text.PlainText
     color: form.dim
     font.family: form.fontFamily
     font.pixelSize: Style.font.caption

@@ -21,6 +21,9 @@ const CATEGORY_LABELS: &[(i32, &str)] = &[
 
 const CORE_CATEGORIES: &[(i32, &str)] = &[(2, "Grok Build"), (4, "Chat"), (5, "Imagine")];
 
+/// Bound on product slices emitted to QML. Core Build/Chat/Imagine sort first.
+pub const MAX_CATEGORIES: usize = 16;
+
 pub struct CreditsConfig {
     pub used_fraction: f64,
     pub reset_iso: String,
@@ -56,7 +59,8 @@ pub fn parse_credits_config(raw: &[u8]) -> Option<CreditsConfig> {
         let scan = scan_protobuf(payload, 0, &[]);
         all_fixed.extend(scan.fixed32);
         all_varint.extend(scan.varints);
-        all_cats.extend(scan.categories);
+        let room = MAX_CATEGORIES.saturating_sub(all_cats.len());
+        all_cats.extend(scan.categories.into_iter().take(room));
     }
 
     let mut percent_candidates: Vec<(Vec<u32>, f32, usize)> = all_fixed
@@ -190,6 +194,7 @@ pub fn parse_credits_config(raw: &[u8]) -> Option<CreditsConfig> {
             )
             .then(a.title.cmp(&b.title))
     });
+    categories.truncate(MAX_CATEGORIES);
 
     Some(CreditsConfig {
         used_fraction: f64::from(used_percent) / 100.0,
@@ -357,7 +362,9 @@ fn scan_protobuf(buf: &[u8], depth: usize, path: &[u32]) -> Scan {
                         }
                     }
                     if let Some(type_id) = cat_type {
-                        categories.push((type_id, cat_pct.unwrap_or(0.0)));
+                        if categories.len() < MAX_CATEGORIES {
+                            categories.push((type_id, cat_pct.unwrap_or(0.0)));
+                        }
                     } else {
                         fixed32.extend(nested_fields.fixed32);
                         varints.extend(nested_fields.varints);
@@ -366,7 +373,8 @@ fn scan_protobuf(buf: &[u8], depth: usize, path: &[u32]) -> Scan {
                     let nested_fields = scan_protobuf(nested, depth + 1, &field_path);
                     fixed32.extend(nested_fields.fixed32);
                     varints.extend(nested_fields.varints);
-                    categories.extend(nested_fields.categories);
+                    let room = MAX_CATEGORIES.saturating_sub(categories.len());
+                    categories.extend(nested_fields.categories.into_iter().take(room));
                 }
                 index += length;
             }
@@ -530,5 +538,34 @@ mod tests {
 
         let parsed = parse_credits_config(&raw).expect("credits");
         assert_eq!(parsed.prepaid_credits, 0);
+    }
+
+    #[test]
+    fn caps_unbounded_category_list() {
+        let start = (Utc::now().timestamp() as u64).saturating_sub(3600);
+        let end = start + 7 * 24 * 3600;
+        let mut period_start = Vec::new();
+        period_start.extend(varint_field(1, start));
+        let mut period_end = Vec::new();
+        period_end.extend(varint_field(1, end));
+        let mut inner = Vec::new();
+        inner.extend(fixed32_field(1, 10.0));
+        inner.extend(len_field(4, &period_start));
+        inner.extend(len_field(5, &period_end));
+        inner.extend(varint_field(6, 1));
+        for type_id in 10..40 {
+            let mut category = Vec::new();
+            category.extend(varint_field(1, type_id));
+            category.extend(fixed32_field(2, 1.0));
+            inner.extend(len_field(7, &category));
+        }
+        let msg = len_field(1, &inner);
+        let raw = grpc_frame(&msg);
+
+        let parsed = parse_credits_config(&raw).expect("credits");
+        assert!(parsed.categories.len() <= MAX_CATEGORIES);
+        assert_eq!(parsed.categories[0].title, "Grok Build");
+        assert_eq!(parsed.categories[1].title, "Chat");
+        assert_eq!(parsed.categories[2].title, "Imagine");
     }
 }

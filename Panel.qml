@@ -113,7 +113,8 @@ Panel {
       extras.push(item)
     }
     extras.sort(function(a, b) { return a.type - b.type })
-    for (var e = 0; e < extras.length; e++)
+    var maxOut = 16
+    for (var e = 0; e < extras.length && out.length < maxOut; e++)
       out.push(extras[e])
     return out
   }
@@ -394,6 +395,7 @@ Panel {
               Text {
                 id: usedText
                 text: root.usedLabel
+                textFormat: Text.PlainText
                 color: root.alarming ? root.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -405,6 +407,7 @@ Panel {
                 id: resetsText
                 visible: text !== ""
                 text: root.resetsLabel
+                textFormat: Text.PlainText
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -472,6 +475,7 @@ Panel {
                   Text {
                     anchors.verticalCenter: parent.verticalCenter
                     text: String(modelData.title || "") + " " + Math.round(pct * 100) + "%"
+                    textFormat: Text.PlainText
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -502,6 +506,7 @@ Panel {
                 text: root.billingHasData
                   ? root.billingLabel + " of API bill this cycle"
                   : root.billingUsedLabel
+                textFormat: Text.PlainText
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -516,6 +521,7 @@ Panel {
                 id: billPeriodText
                 visible: root.billingPeriod !== ""
                 text: root.billingPeriod
+                textFormat: Text.PlainText
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -528,6 +534,7 @@ Panel {
               visible: !root.billingHasData && root.billingHelpText !== ""
               width: parent.width
               text: root.billingHelpText
+              textFormat: Text.PlainText
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -612,6 +619,7 @@ Panel {
             }
           }
         }
+
       }
     }
   }
