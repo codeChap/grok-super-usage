@@ -590,6 +590,7 @@ BarWidget {
         visible: root.showWeeklyUsage && root.primaryText !== ""
         anchors.verticalCenter: parent.verticalCenter
         text: root.primaryText
+        textFormat: Text.PlainText
         color: root.grokAlarming ? button.activeColor : button.foreground
         font.family: button.fontFamily
         font.pixelSize: button.fontSize
@@ -600,6 +601,7 @@ BarWidget {
         visible: root.showWeeklyUsage && root.resetText !== ""
         anchors.baseline: primaryLabel.baseline
         text: root.resetText
+        textFormat: Text.PlainText
         color: root.dim
         font.family: button.fontFamily
         font.pixelSize: button.fontSize
@@ -614,6 +616,7 @@ BarWidget {
         Text {
           id: priceLabel
           text: root.billingText
+          textFormat: Text.PlainText
           color: button.foreground
           font.family: button.fontFamily
           font.pixelSize: button.fontSize
@@ -622,6 +625,7 @@ BarWidget {
 
         Text {
           text: "api"
+          textFormat: Text.PlainText
           color: root.dim
           font.family: button.fontFamily
           font.pixelSize: button.fontSize
