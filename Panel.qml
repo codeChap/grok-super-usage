@@ -34,11 +34,22 @@ Panel {
   readonly property string usageStatusText: hostWidget ? String(hostWidget.usageStatusText || "") : ""
   readonly property string authHelpText: hostWidget ? String(hostWidget.authHelpText || "") : ""
   readonly property var categories: hostWidget && hostWidget.categories ? hostWidget.categories : []
+  readonly property var accounts: hostWidget && Array.isArray(hostWidget.accounts) ? hostWidget.accounts : []
   readonly property double nowMs: hostWidget ? Number(hostWidget.nowMs) : Date.now()
   readonly property int prepaidCredits: hostWidget ? Number(hostWidget.prepaidCredits) || 0 : 0
   readonly property bool onCredits: primaryPercent >= 1.0 && prepaidCredits > 0
+  readonly property bool multiAccount: accounts.length > 1
 
-  readonly property bool grokHasData: rawPrimaryPercent >= 0
+  readonly property bool grokHasData: {
+    var accs = root.accounts
+    if (accs && accs.length) {
+      for (var i = 0; i < accs.length; i++) {
+        if (Number(accs[i] && accs[i].rateLimitPercent) >= 0) return true
+        if (String((accs[i] && accs[i].usageStatusText) || "") !== "") return true
+      }
+    }
+    return rawPrimaryPercent >= 0
+  }
   readonly property bool billingHasData: hostWidget ? hostWidget.billingHasData === true : false
   readonly property string billingLabel: hostWidget ? String(hostWidget.billingLabel || "") : ""
   readonly property string billingPeriod: hostWidget ? String(hostWidget.billingPeriod || "") : ""
@@ -81,72 +92,18 @@ Panel {
   readonly property color usageFillColor: paceAlarming ? overPaceColor : underPaceColor
   readonly property bool alarming: primaryPercent >= 0.9 || paceAlarming
 
-  readonly property var productLimits: {
-    var byType = {}
-    var cats = root.categories
-    if (cats && cats.length) {
-      for (var i = 0; i < cats.length; i++) {
-        var c = cats[i]
-        if (!c) continue
-        var t = Number(c.type)
-        if (!isFinite(t)) continue
-        var pct = Number(c.percent)
-        if (!isFinite(pct) || pct < 0) pct = 0
-        byType[t] = { title: String(c.title || "Product"), type: t, percent: pct }
-      }
-    }
-    var core = [
-      { type: 2, title: "Grok Build" },
-      { type: 4, title: "Chat" },
-      { type: 5, title: "Imagine" }
-    ]
-    var out = []
-    for (var k = 0; k < core.length; k++) {
-      var want = core[k]
-      out.push(byType[want.type] || { title: want.title, type: want.type, percent: 0 })
-    }
-    var extras = []
-    for (var key in byType) {
-      var item = byType[key]
-      if (item.type === 2 || item.type === 4 || item.type === 5) continue
-      if (!(item.percent > 0)) continue
-      extras.push(item)
-    }
-    extras.sort(function(a, b) { return a.type - b.type })
-    var maxOut = 16
-    for (var e = 0; e < extras.length && out.length < maxOut; e++)
-      out.push(extras[e])
-    return out
-  }
-
   readonly property string weeklyTitle: tierLabel !== "" ? tierLabel : "Grok"
   readonly property string grokRebillLabel: root.formatRebillLabel(subscriptionPeriodEnd, subscriptionCancelsAtEnd)
   readonly property string heroMeta: {
+    if (root.multiAccount) return root.accounts.length + " SuperGrok logins"
     if (usageStatusText !== "") return usageStatusText
     if (grokRebillLabel !== "") return grokRebillLabel
     return "\u00A0"
   }
   readonly property real grokMetaOpacity: {
+    if (root.multiAccount) return 1
     if (usageStatusText !== "") return 1
     return grokRebillLabel !== "" ? 1 : 0
-  }
-  readonly property string usedLabel: {
-    if (primaryPercent < 0) return ""
-    var pct = Math.round(primaryPercent * 100) + "% of weekly limit used"
-    if (onCredits) pct += " ($" + (prepaidCredits / 100).toFixed(2) + ")"
-    return pct
-  }
-  readonly property string resetsLabel: root.formatResetsLabel(resetAt)
-
-  readonly property var segmentPalette: {
-    var base = root.usageFillColor
-    return [
-      base,
-      Qt.rgba(base.r, base.g, base.b, 0.72),
-      Qt.rgba(base.r, base.g, base.b, 0.50),
-      Qt.rgba(base.r, base.g, base.b, 0.86),
-      Qt.rgba(base.r, base.g, base.b, 0.60)
-    ]
   }
 
   function parseTimeMs(value) {
@@ -174,20 +131,6 @@ Panel {
     var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     return months[when.getMonth()]
-  }
-
-  function formatResetsLabel(iso) {
-    var when = root.parseResetWhen(iso)
-    if (!when) return ""
-    var h = when.getHours()
-    var min = when.getMinutes()
-    var ampm = h >= 12 ? "PM" : "AM"
-    var h12 = h % 12
-    if (h12 === 0) h12 = 12
-    var timePart = min > 0
-      ? (h12 + ":" + (min < 10 ? "0" : "") + min + ampm)
-      : (h12 + ampm)
-    return "Resets " + root.shortMonthName(when) + " " + when.getDate() + ", " + timePart
   }
 
   function formatRebillLabel(iso, cancels) {
@@ -239,6 +182,16 @@ Panel {
   }
 
   function closeSettings() { root.settingsOpen = false }
+
+  function snapshotCurrentLogin() {
+    if (hostWidget && typeof hostWidget.snapshotCurrentLogin === "function")
+      hostWidget.snapshotCurrentLogin()
+  }
+
+  function forgetSavedLogin(path) {
+    if (hostWidget && typeof hostWidget.forgetSavedLogin === "function")
+      hostWidget.forgetSavedLogin(path)
+  }
 
   function saveManagementKeyPath(path) {
     var next = String(path || "").trim()
@@ -319,7 +272,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(900))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -333,13 +286,33 @@ Panel {
         if (t === "c" || t === "C") root.openConsole()
       }
 
+      Flickable {
+        id: usageFlick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        // Do not steal mouse from toggles/buttons; wheel still scrolls.
+        interactive: false
+
+        WheelHandler {
+          enabled: usageFlick.contentHeight > usageFlick.height + 2
+          onWheel: function(event) {
+            var next = usageFlick.contentY - event.angleDelta.y
+            var maxY = Math.max(0, usageFlick.contentHeight - usageFlick.height)
+            usageFlick.contentY = Math.max(0, Math.min(maxY, next))
+            event.accepted = true
+          }
+        }
+
       Column {
         id: column
         width: parent.width
         spacing: Style.space(12)
 
         Column {
-          visible: root.grokHasData || root.usageStatusText !== ""
+          visible: root.grokHasData || root.usageStatusText !== "" || root.accounts.length > 0
           width: parent.width
           spacing: Style.space(12)
 
@@ -355,135 +328,45 @@ Panel {
             onConsoleClicked: root.openConsole()
           }
 
-          BorderSurface {
-            visible: root.usageStatusText !== ""
-            width: parent.width
-            implicitHeight: statusText.implicitHeight + Style.spacing.xl * 2
-            color: Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.10)
-            borderSpec: Border.flat(Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.35), 1)
-            radius: Style.cornerRadius
+          Repeater {
+            model: root.accounts.length > 0 ? root.accounts : (root.grokHasData || root.usageStatusText !== "" ? [{
+              rateLimitPercent: root.rawPrimaryPercent,
+              rateLimitResetAt: root.resetAt,
+              rateLimitPeriodStart: root.periodStart,
+              categories: root.categories,
+              prepaidCredits: root.prepaidCredits,
+              usageStatusText: root.usageStatusText,
+              authHelpText: root.authHelpText,
+              accountEmail: hostWidget ? String(hostWidget.grokLoginEmail || "") : "",
+              accountName: hostWidget ? String(hostWidget.grokLoginName || "") : ""
+            }] : [])
 
-            Text {
-              id: statusText
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.space(12)
-              anchors.rightMargin: Style.space(12)
-              text: root.authHelpText !== "" ? root.authHelpText : root.usageStatusText
-              textFormat: Text.PlainText
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-          }
-
-          PanelSeparator {
-            visible: usageSection.visible
-            foreground: root.foreground
-          }
-
-          Column {
-            id: usageSection
-            visible: root.primaryPercent >= 0
-            width: parent.width
-            spacing: Style.space(10)
-
-            Item {
-              width: parent.width
-              implicitHeight: Math.max(usedText.implicitHeight, resetsText.implicitHeight)
-
-              Text {
-                id: usedText
-                text: root.usedLabel
-                textFormat: Text.PlainText
-                color: root.alarming ? root.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: resetsText
-                visible: text !== ""
-                text: root.resetsLabel
-                textFormat: Text.PlainText
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideLeft
-                horizontalAlignment: Text.AlignRight
-                anchors.right: parent.right
-                anchors.left: usedText.right
-                anchors.leftMargin: Style.space(10)
-                anchors.verticalCenter: parent.verticalCenter
-              }
-            }
-
-            SegmentedMeter {
-              width: parent.width
-              visible: root.productLimits.length > 0 || root.primaryPercent >= 0
-              segments: root.productLimits
-              totalPercent: root.primaryPercent
-              expectedPace: root.expectedPace
-              fillColor: root.usageFillColor
-              paceMarkerColor: root.paceMarkerColor
-              track: root.track
-              foreground: root.foreground
-              segmentPalette: root.segmentPalette
-            }
-
-            Flow {
-              visible: root.primaryPercent >= 0
-              width: parent.width
+            Column {
+              required property var modelData
+              required property int index
+              width: column.width
               spacing: Style.space(12)
 
-              Repeater {
-                model: [
-                  { title: "Grok Build", type: 2 },
-                  { title: "Chat", type: 4 },
-                  { title: "Imagine", type: 5 }
-                ]
+              PanelSeparator {
+                visible: index > 0
+                foreground: root.foreground
+              }
 
-                Row {
-                  required property var modelData
-                  required property int index
-                  readonly property real pct: {
-                    var want = Number(modelData && modelData.type)
-                    var segs = root.productLimits || []
-                    for (var i = 0; i < segs.length; i++) {
-                      if (Number(segs[i] && segs[i].type) !== want) continue
-                      var p = Number(segs[i].percent)
-                      if (!isFinite(p) || p < 0) return 0
-                      return p
-                    }
-                    return 0
-                  }
-                  spacing: Style.space(5)
-
-                  Rectangle {
-                    width: Style.space(6)
-                    height: Style.space(6)
-                    radius: width / 2
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: {
-                      var pal = root.segmentPalette
-                      return pal && pal.length ? pal[index % pal.length] : root.usageFillColor
-                    }
-                  }
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: String(modelData.title || "") + " " + Math.round(pct * 100) + "%"
-                    textFormat: Text.PlainText
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    renderType: Text.NativeRendering
-                  }
-                }
+              UsageSection {
+                width: parent.width
+                usage: modelData
+                showAccountLabel: root.multiAccount
+                nowMs: root.nowMs
+                paceAlarmEnabled: root.paceAlarmEnabled
+                paceAlarmFloor: root.paceAlarmFloor
+                foreground: root.foreground
+                urgent: root.urgent
+                dim: root.dim
+                underPaceColor: root.underPaceColor
+                overPaceColor: root.overPaceColor
+                paceMarkerColor: root.paceMarkerColor
+                track: root.track
+                fontFamily: root.fontFamily
               }
             }
           }
@@ -494,7 +377,7 @@ Panel {
             spacing: Style.space(10)
 
             PanelSeparator {
-              visible: usageSection.visible
+              visible: root.accounts.length > 0 || root.primaryPercent >= 0
               foreground: root.foreground
             }
 
@@ -623,6 +506,7 @@ Panel {
         }
 
       }
+      }
     }
   }
 
@@ -638,8 +522,13 @@ Panel {
     billingHasData: root.billingHasData
     billingLabel: root.billingLabel
     billingHelpText: root.billingHelpText
+    accounts: root.accounts
+    grokLoginEmail: hostWidget ? String(hostWidget.grokLoginEmail || "") : ""
+    grokLoginName: hostWidget ? String(hostWidget.grokLoginName || "") : ""
     onClosed: root.closeSettings()
     onFlagChanged: function(key, on) { root.setFlag(key, on) }
     onKeyPathCommitted: function(path) { root.saveManagementKeyPath(path) }
+    onSaveCurrentLogin: root.snapshotCurrentLogin()
+    onForgetSavedLogin: function(path) { root.forgetSavedLogin(path) }
   }
 }

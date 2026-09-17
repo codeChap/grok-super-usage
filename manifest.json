@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "codechap.grok-super-usage",
   "name": "Grok Super Usage",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Derrick Egersdorfer",
   "license": "MIT",
-  "description": "SuperGrok weekly pool on the bar, plus xAI API invoice spend.",
+  "description": "SuperGrok weekly pool on the bar for one or more Grok logins, plus xAI API invoice spend.",
   "kinds": [
     "bar-widget"
   ],

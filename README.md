@@ -2,7 +2,7 @@
 
 SuperGrok weekly usage and xAI API invoice spend for the [Omarchy](https://omarchy.org/) bar.
 
-Click the chip for Build / Chat / Imagine, reset time, and this cycle’s API bill. A cog in the panel opens settings.
+Click the chip for Build / Chat / Imagine, reset time, and this cycle’s API bill. A cog in the panel opens settings. The bar follows the current Grok CLI login. Other saved SuperGrok logins stay on the panel after `grok login`.
 
 <img src="https://raw.githubusercontent.com/codeChap/grok-super-usage/main/preview.png" alt="Grok Super Usage panel: weekly percent, product slices, and API bill" width="404" />
 
@@ -27,8 +27,9 @@ This is SuperGrok weekly quota plus optional xAI Management API invoice spend. I
 4. Plugin id is codechap.grok-super-usage. Put it on the right of the bar if it is not already there:
    omarchy bar move codechap.grok-super-usage --section right
 5. Weekly percent needs `grok login` and ~/.grok/auth.json.
-6. API dollars are optional. Use a team-scoped Management API key from console.x.ai in a chmod 600 file (default ~/dev/XAI-MGMT-KEY.txt) or Settings. Never put the key on the command line or in shell.json. Store a path only.
-7. Do not skip ./install.sh. plugin add only clones. The scanner binary is grok-super-usage next to the QML.
+6. A scan keeps a copy of the current Grok CLI login. After `grok login` with another SuperGrok account, the panel keeps the previous weekly block and the bar follows the new login.
+7. API dollars are optional. Use a team-scoped Management API key from console.x.ai in a chmod 600 file (default ~/dev/XAI-MGMT-KEY.txt) or Settings. Never put the key on the command line or in shell.json. Store a path only.
+8. Do not skip ./install.sh. plugin add only clones. The scanner binary is grok-super-usage next to the QML.
 ````
 
 ## Install
@@ -60,6 +61,18 @@ grok login
 ```
 
 Weekly percent comes from grok.com `GetGrokCreditsConfig` using `~/.grok/auth.json`.
+
+### More than one SuperGrok
+
+`grok login` replaces the CLI session. This plugin keeps a copy of each login it has scanned:
+
+1. Use the widget while signed in, or cog → **Save this login**.
+2. `grok login` with the new account.
+3. The bar chip and panel header follow the new CLI login, even at 0% for a fresh week. Previous logins stay as extra weekly blocks. The chip still lists each percent.
+
+A scan writes a snapshot only when that login is not already saved. It does not rewrite files on every refresh. Writes under the plugin folder reload the Omarchy bar.
+
+Saved copies live in the plugin `accounts/` folder (mode 600). They are only for this widget. `grok` itself still uses `~/.grok/auth.json`. Remove a saved login in Settings. Cap is 8.
 
 ### API billing (optional)
 
@@ -101,11 +114,11 @@ omarchy plugin disable codechap.grok-super-usage
 omarchy plugin remove codechap.grok-super-usage --yes
 ```
 
-Removal deletes the cloned plugin folder. It does not change `~/.grok/auth.json` or your management key file.
+Removal deletes the cloned plugin folder, including any saved logins in `accounts/`. It does not change `~/.grok/auth.json` or your management key file.
 
 ## Privacy
 
-- SuperGrok: reads local `~/.grok/auth.json`, may refresh the OIDC token in that file (flock + merge so it does not clobber a concurrent `grok login`).
+- SuperGrok: reads local `~/.grok/auth.json` and optional snapshots in the plugin `accounts/` folder. May refresh the OIDC token in those files (flock + merge so it does not clobber a concurrent `grok login`).
 - API billing: reads a management key from a chmod 600 file or `XAI_MANAGEMENT_KEY`. Settings store a **path**, never the key.
 - Tokens are not logged. This plugin does not send credentials to third parties; it only calls grok.com and `management-api.x.ai`.
 

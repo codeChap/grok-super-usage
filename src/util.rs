@@ -198,6 +198,13 @@ pub fn atomic_write_json(path: &Path, value: &Value) -> io::Result<()> {
 }
 
 pub fn atomic_write_secret(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if path.is_file() {
+        if let Ok(existing) = fs::read(path) {
+            if existing == bytes {
+                return Ok(());
+            }
+        }
+    }
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(

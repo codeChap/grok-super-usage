@@ -27,6 +27,7 @@ BarWidget {
   property string usageStatusText: ""
   property string authHelpText: ""
   property var categories: []
+  property var accounts: []
   property bool hasData: false
   property bool refreshing: false
   property bool grokAvailable: false
@@ -73,6 +74,20 @@ BarWidget {
   readonly property bool grokVisible: hasData
   readonly property bool chipVisible: hasData || billingHasData
   readonly property string primaryText: {
+    var accs = root.accounts
+    var parts = []
+    if (accs && accs.length) {
+      for (var i = 0; i < accs.length; i++) {
+        var p = Number(accs[i] && accs[i].rateLimitPercent)
+        if (!isFinite(p) || p < 0) continue
+        var label = Math.round(p * 100) + "%"
+        var credits = Number(accs[i] && accs[i].prepaidCredits) || 0
+        if (p >= 1.0 && credits > 0)
+          label += " ($" + (credits / 100).toFixed(2) + ")"
+        parts.push(label)
+      }
+    }
+    if (parts.length > 0) return parts.join(" · ")
     if (displayPercent < 0) return ""
     var pct = Math.round(displayPercent * 100) + "%"
     if (displayPercent >= 1.0 && prepaidCredits > 0)
@@ -80,6 +95,7 @@ BarWidget {
     return pct
   }
   readonly property string resetText: {
+    if (root.accounts && root.accounts.length > 1) return ""
     if (resetAt === "") return ""
     var ms = new Date(resetAt).getTime() - root.nowMs
     return isFinite(ms) ? root.formatBarDuration(ms) : ""
@@ -89,7 +105,22 @@ BarWidget {
   readonly property string tooltipText: {
     var lines = []
     var title = root.tierLabel !== "" ? root.tierLabel : "Grok"
-    if (root.displayPercent >= 0) {
+    var accs = root.accounts
+    if (accs && accs.length > 1) {
+      lines.push(title)
+      for (var i = 0; i < accs.length; i++) {
+        var acc = accs[i] || {}
+        var who = String(acc.accountEmail || acc.accountName || (acc.saved ? "Saved login" : "This login"))
+        if (acc.saved !== true) who = "Current · " + who
+        var p = Number(acc.rateLimitPercent)
+        if (isFinite(p) && p >= 0)
+          lines.push(who + " · " + Math.round(p * 100) + "%")
+        else if (acc.usageStatusText)
+          lines.push(who + " · " + String(acc.usageStatusText))
+        else
+          lines.push(who)
+      }
+    } else if (root.displayPercent >= 0) {
       var used = Math.round(root.displayPercent * 100) + "% of weekly limit"
       if (root.displayPercent >= 1.0 && root.prepaidCredits > 0)
         used += " · $" + (root.prepaidCredits / 100).toFixed(2) + " prepaid"
@@ -114,6 +145,7 @@ BarWidget {
 
   readonly property string scannerPath: root.fileUrlToPath(Qt.resolvedUrl("grok-super-usage"))
   readonly property string pluginKeyPath: root.fileUrlToPath(Qt.resolvedUrl("management.key"))
+  readonly property string accountsDir: root.fileUrlToPath(Qt.resolvedUrl("accounts"))
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
@@ -167,7 +199,31 @@ BarWidget {
     var authPath = root.resolvePath(root.setting("authPath", ""))
     if (authPath !== "")
       command.push("--auth", authPath)
+    if (root.accountsDir !== "")
+      command.push("--accounts-dir", root.accountsDir)
     return command
+  }
+
+  function snapshotCommand() {
+    var command = [root.scannerPath, "snapshot", "--dir", root.accountsDir]
+    var authPath = root.resolvePath(root.setting("authPath", ""))
+    if (authPath !== "")
+      command.push("--auth", authPath)
+    return command
+  }
+
+  function forgetCommand(path) {
+    return [root.scannerPath, "forget", "--path", String(path || ""), "--dir", root.accountsDir]
+  }
+
+  function snapshotCurrentLogin() {
+    root.startIfIdle(snapshotProc, root.snapshotCommand())
+  }
+
+  function forgetSavedLogin(path) {
+    var text = String(path || "").trim()
+    if (text === "") return
+    root.startIfIdle(forgetProc, root.forgetCommand(text))
   }
 
   function billingCommand(probe) {
@@ -215,23 +271,42 @@ BarWidget {
   function applyScan(data) {
     if (!data || typeof data !== "object") {
       root.hasData = false
+      root.accounts = []
       return
     }
-    var primary = Number(data.rateLimitPercent)
+    var accs = Array.isArray(data.accounts) && data.accounts.length
+      ? data.accounts
+      : [data]
+    root.accounts = accs
+    var bar = accs[0] || data
+    for (var i = 0; i < accs.length; i++) {
+      if (accs[i] && accs[i].saved !== true) {
+        bar = accs[i]
+        break
+      }
+    }
+    var primary = Number(bar && bar.rateLimitPercent)
+    if (!isFinite(primary)) primary = Number(data.rateLimitPercent)
     if (!isFinite(primary)) primary = -1
     root.primaryPercent = primary
-    root.resetAt = String(data.rateLimitResetAt || "")
-    root.periodStart = String(data.rateLimitPeriodStart || "")
-    root.tierLabel = String(data.tierLabel || "")
-    root.grokLoginName = String(data.accountName || "")
-    root.grokLoginEmail = String(data.accountEmail || "")
-    root.subscriptionPeriodEnd = String(data.subscriptionPeriodEnd || "")
-    root.subscriptionCancelsAtEnd = data.subscriptionCancelsAtEnd === true
-    root.usageStatusText = String(data.usageStatusText || "")
-    root.authHelpText = String(data.authHelpText || "")
-    root.categories = Array.isArray(data.categories) ? data.categories : []
-    root.prepaidCredits = Number(data.prepaidCredits) || 0
+    root.resetAt = String((bar && bar.rateLimitResetAt) || data.rateLimitResetAt || "")
+    root.periodStart = String((bar && bar.rateLimitPeriodStart) || data.rateLimitPeriodStart || "")
+    root.tierLabel = String((bar && bar.tierLabel) || data.tierLabel || "")
+    root.grokLoginName = String((bar && bar.accountName) || data.accountName || "")
+    root.grokLoginEmail = String((bar && bar.accountEmail) || data.accountEmail || "")
+    root.subscriptionPeriodEnd = String((bar && bar.subscriptionPeriodEnd) || data.subscriptionPeriodEnd || "")
+    root.subscriptionCancelsAtEnd = (bar && bar.subscriptionCancelsAtEnd === true)
+      || data.subscriptionCancelsAtEnd === true
+    root.usageStatusText = String((bar && bar.usageStatusText) || data.usageStatusText || "")
+    root.authHelpText = String((bar && bar.authHelpText) || data.authHelpText || "")
+    root.categories = Array.isArray(bar && bar.categories) ? bar.categories
+      : (Array.isArray(data.categories) ? data.categories : [])
+    root.prepaidCredits = Number((bar && bar.prepaidCredits) || data.prepaidCredits) || 0
     root.hasData = primary >= 0
+    for (var j = 0; j < accs.length && !root.hasData; j++) {
+      if (Number(accs[j] && accs[j].rateLimitPercent) >= 0)
+        root.hasData = true
+    }
     root.nowMs = Date.now()
     root.injectPanel()
   }
@@ -248,6 +323,7 @@ BarWidget {
     root.usageStatusText = ""
     root.authHelpText = ""
     root.categories = []
+    root.accounts = []
     root.prepaidCredits = 0
     root.hasData = false
   }
@@ -499,6 +575,44 @@ BarWidget {
   }
 
   Process {
+    id: snapshotProc
+    running: false
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var path = text.trim()
+        if (path.indexOf("/") === 0)
+          root.refreshUsage()
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.refreshUsage()
+    }
+    stderr: StdioCollector {
+      onStreamFinished: if (text.trim() !== "")
+        console.warn("codechap.grok-super-usage snapshot failed")
+    }
+  }
+
+  Process {
+    id: forgetProc
+    running: false
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var path = text.trim()
+        if (path.indexOf("/") === 0)
+          root.refreshUsage()
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.refreshUsage()
+    }
+    stderr: StdioCollector {
+      onStreamFinished: if (text.trim() !== "")
+        console.warn("codechap.grok-super-usage forget failed")
+    }
+  }
+
+  Process {
     id: storeKeyProc
     running: false
     stdinEnabled: true
@@ -590,6 +704,7 @@ BarWidget {
         visible: root.showWeeklyUsage && root.primaryText !== ""
         anchors.verticalCenter: parent.verticalCenter
         text: root.primaryText
+        textFormat: Text.PlainText
         color: root.grokAlarming ? button.activeColor : button.foreground
         font.family: button.fontFamily
         font.pixelSize: button.fontSize
@@ -600,6 +715,7 @@ BarWidget {
         visible: root.showWeeklyUsage && root.resetText !== ""
         anchors.baseline: primaryLabel.baseline
         text: root.resetText
+        textFormat: Text.PlainText
         color: root.dim
         font.family: button.fontFamily
         font.pixelSize: button.fontSize
@@ -614,6 +730,7 @@ BarWidget {
         Text {
           id: priceLabel
           text: root.billingText
+          textFormat: Text.PlainText
           color: button.foreground
           font.family: button.fontFamily
           font.pixelSize: button.fontSize
@@ -622,6 +739,7 @@ BarWidget {
 
         Text {
           text: "api"
+          textFormat: Text.PlainText
           color: root.dim
           font.family: button.fontFamily
           font.pixelSize: button.fontSize
