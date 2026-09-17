@@ -1,5 +1,6 @@
 /target
 /grok-super-usage
+/accounts
 *.swp
 .idea
 .env

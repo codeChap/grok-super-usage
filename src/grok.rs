@@ -3,8 +3,11 @@ use std::path::{Path, PathBuf};
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::{Map, Value};
 
+use crate::accounts::{
+    collect_auth_sources, copy_login, default_accounts_dir, snapshot_stem, AuthSource,
+};
 use crate::proto::parse_credits_config;
-use crate::scan::{emit, ScanResult};
+use crate::scan::{emit, emit_with_accounts, ScanResult};
 use crate::util::{
     account_display_name, atomic_write_json, decode_jwt, expand_path, home_dir, http_agent,
     http_error_kind, http_status, lock_exclusive, parse_iso, plain_text, read_http_body,
@@ -24,43 +27,208 @@ struct Creds {
     expires_at: String,
     client_id: String,
     email: String,
+    user_id: String,
     auth_path: PathBuf,
     auth_data: Value,
 }
 
-pub fn run(probe: bool, auth: Option<PathBuf>) -> i32 {
-    let auth_path = expand_path(auth.as_deref(), home_dir().join(".grok/auth.json"));
+pub fn default_auth_path() -> PathBuf {
+    home_dir().join(".grok/auth.json")
+}
+
+pub fn run(probe: bool, auth: Option<PathBuf>, accounts_dir: Option<PathBuf>) -> i32 {
+    let live_path = expand_path(auth.as_deref(), default_auth_path());
+    let extra_dir = accounts_dir.map(|p| expand_path(Some(p.as_path()), default_accounts_dir()));
+    let sources = collect_auth_sources(&live_path, extra_dir.as_deref());
+    if probe {
+        return probe_sources(&sources);
+    }
+    if sources.is_empty() {
+        return emit(&ScanResult::status(
+            "Sign in to Grok",
+            "Run `grok login` to sign in. Credentials are stored in ~/.grok/auth.json.",
+        ));
+    }
+    scan_sources(&sources, extra_dir.as_deref())
+}
+
+pub fn snapshot(auth: Option<PathBuf>, dir: Option<PathBuf>) -> i32 {
+    let auth_path = expand_path(auth.as_deref(), default_auth_path());
+    let dest_dir = expand_path(dir.as_deref(), default_accounts_dir());
     match load_auth(&auth_path) {
-        Ok(Some(mut creds)) => {
-            if probe {
-                println!("present");
-                return 0;
-            }
-            match ensure_token(&mut creds) {
-                Ok(()) => scan(&mut creds),
-                Err(result) => emit(&result),
-            }
-        }
         Ok(None) => {
-            if probe {
-                println!("absent");
-                0
-            } else {
-                emit(&ScanResult::status(
-                    "Sign in to Grok",
-                    "Run `grok login` to sign in. Credentials are stored in ~/.grok/auth.json.",
-                ))
-            }
+            eprintln!("grok-super-usage: no Grok login at {}", auth_path.display());
+            1
         }
-        Err(result) => {
-            if probe {
-                println!("unreadable");
-                0
-            } else {
-                emit(&result)
+        Err(_) => {
+            eprintln!(
+                "grok-super-usage: could not read Grok login at {}",
+                auth_path.display()
+            );
+            1
+        }
+        Ok(Some(creds)) => {
+            let stem = snapshot_stem(&creds.email, &creds.scope);
+            let dest = dest_dir.join(format!("{stem}.json"));
+            let code = copy_login(&auth_path, &dest_dir, &stem);
+            if code == 0 {
+                println!("{}", dest.display());
             }
+            code
         }
     }
+}
+
+fn probe_sources(sources: &[AuthSource]) -> i32 {
+    let mut any_file = false;
+    let mut any_present = false;
+    let mut any_unreadable = false;
+    for src in sources {
+        if !src.path.is_file() {
+            continue;
+        }
+        any_file = true;
+        match load_auth(&src.path) {
+            Ok(Some(_)) => any_present = true,
+            Ok(None) => {}
+            Err(_) => any_unreadable = true,
+        }
+    }
+    if any_present {
+        println!("present");
+    } else if any_file && any_unreadable {
+        println!("unreadable");
+    } else {
+        println!("absent");
+    }
+    0
+}
+
+fn scan_sources(sources: &[AuthSource], accounts_dir: Option<&Path>) -> i32 {
+    let scanned: Vec<ScanResult> = std::thread::scope(|scope| {
+        let handles: Vec<_> = sources
+            .iter()
+            .map(|src| scope.spawn(|| scan_source(src)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join().unwrap_or_else(|_| {
+                    ScanResult::status("Grok limits unavailable", "Usage scan thread failed.")
+                })
+            })
+            .collect()
+    });
+    let accounts = dedupe_accounts(sources, scanned);
+    if accounts.is_empty() {
+        return emit(&ScanResult::status(
+            "Sign in to Grok",
+            "Run `grok login` to sign in. Credentials are stored in ~/.grok/auth.json.",
+        ));
+    }
+    remember_live_login(sources, accounts_dir, &accounts);
+    let primary = pick_primary(&accounts);
+    emit_with_accounts(&primary, &accounts)
+}
+
+fn remember_live_login(
+    sources: &[AuthSource],
+    accounts_dir: Option<&Path>,
+    accounts: &[ScanResult],
+) {
+    let Some(dir) = accounts_dir else {
+        return;
+    };
+    let Some(live_src) = sources.iter().find(|s| !s.saved) else {
+        return;
+    };
+    let Some(live) = accounts.iter().find(|a| !a.saved) else {
+        return;
+    };
+    let stem = snapshot_stem(&live.account_email, &live.account_user_id);
+    let _ = copy_login(&live_src.path, dir, &stem);
+}
+
+fn scan_source(source: &AuthSource) -> ScanResult {
+    let mut result = match load_auth(&source.path) {
+        Ok(Some(mut creds)) => match ensure_token(&mut creds) {
+            Ok(()) => scan_account(&mut creds),
+            Err(err) => err,
+        },
+        Ok(None) => ScanResult::status(
+            "Sign in to Grok",
+            if source.saved {
+                "This saved login is empty. Remove it in Settings, or save it again after `grok login`."
+            } else {
+                "Run `grok login` to sign in. Credentials are stored in ~/.grok/auth.json."
+            },
+        ),
+        Err(err) => err,
+    };
+    result.saved = source.saved;
+    if source.saved {
+        result.saved_path = source.path.display().to_string();
+        if result.usage_status_text == "Sign in to Grok"
+            && result.auth_help_text.contains("`grok login` again")
+        {
+            result.auth_help_text =
+                "This saved login expired. Remove it in Settings, or save it again after `grok login`."
+                    .into();
+        }
+    }
+    result
+}
+
+fn account_key(result: &ScanResult) -> String {
+    let id = result.account_user_id.trim().to_ascii_lowercase();
+    if !id.is_empty() {
+        return format!("id:{id}");
+    }
+    let email = result.account_email.trim().to_ascii_lowercase();
+    if !email.is_empty() {
+        return email;
+    }
+    let name = result.account_name.trim().to_ascii_lowercase();
+    if !name.is_empty() {
+        return format!("name:{name}");
+    }
+    if !result.saved_path.is_empty() {
+        return format!("path:{}", result.saved_path);
+    }
+    String::new()
+}
+
+fn dedupe_accounts(sources: &[AuthSource], scanned: Vec<ScanResult>) -> Vec<ScanResult> {
+    let mut out = Vec::new();
+    let mut seen = Vec::new();
+    for (i, result) in scanned.into_iter().enumerate() {
+        let live = sources.get(i).is_some_and(|s| !s.saved);
+        let key = account_key(&result);
+        if !key.is_empty() && seen.iter().any(|k| k == &key) {
+            continue;
+        }
+        if !key.is_empty() {
+            seen.push(key);
+        } else if !live && result.rate_limit_percent < 0.0 && result.usage_status_text.is_empty() {
+            continue;
+        }
+        out.push(result);
+    }
+    out
+}
+
+fn pick_primary(accounts: &[ScanResult]) -> ScanResult {
+    accounts
+        .iter()
+        .find(|a| !a.saved)
+        .or_else(|| accounts.first())
+        .cloned()
+        .unwrap_or_else(|| {
+            ScanResult::status(
+                "Sign in to Grok",
+                "Run `grok login` to sign in. Credentials are stored in ~/.grok/auth.json.",
+            )
+        })
 }
 
 fn load_auth(path: &Path) -> Result<Option<Creds>, ScanResult> {
@@ -105,10 +273,31 @@ fn load_auth(path: &Path) -> Result<Option<Creds>, ScanResult> {
         expires_at: entry_field(&entry, "expires_at"),
         client_id: entry_field(&entry, "oidc_client_id"),
         email: entry_field(&entry, "email"),
+        user_id: entry_user_id(&entry, &token),
         token,
         auth_path: path.to_path_buf(),
         auth_data: data,
     }))
+}
+
+fn entry_user_id(entry: &Value, token: &str) -> String {
+    let from_file = entry_field(entry, "user_id");
+    if !from_file.is_empty() {
+        return from_file;
+    }
+    let principal = entry_field(entry, "principal_id");
+    if !principal.is_empty() {
+        return principal;
+    }
+    decode_jwt(token)
+        .and_then(|payload| {
+            payload
+                .get("sub")
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default()
 }
 
 fn entry_field(entry: &Value, key: &str) -> String {
@@ -510,10 +699,10 @@ fn subscription_rebill(payload: &Value) -> (String, bool) {
     (end, cancels)
 }
 
-fn scan(creds: &mut Creds) -> i32 {
+fn scan_account(creds: &mut Creds) -> ScanResult {
     let weekly = match with_auth_retry(creds, fetch_weekly) {
         Ok(weekly) => weekly,
-        Err(err) => return emit(&err),
+        Err(err) => return err,
     };
 
     let token = creds.token.clone();
@@ -555,7 +744,7 @@ fn scan(creds: &mut Creds) -> i32 {
         (period_end, cancels) = subscription_rebill(&subs);
     }
 
-    emit(&ScanResult {
+    ScanResult {
         ready: true,
         rate_limit_percent: weekly.used_fraction,
         rate_limit_label: "Weekly".into(),
@@ -565,12 +754,13 @@ fn scan(creds: &mut Creds) -> i32 {
         tier_label: plain_text(&tier_label, 80),
         account_name: plain_text(&account_name, 80),
         account_email: plain_text(&account_email, 254),
+        account_user_id: plain_text(&creds.user_id, 80),
         subscription_period_end: plain_text(&period_end, 40),
         subscription_cancels_at_end: cancels,
         categories: weekly.categories,
         prepaid_credits: weekly.prepaid_credits,
         ..ScanResult::default()
-    })
+    }
 }
 
 #[cfg(test)]
@@ -608,9 +798,176 @@ mod tests {
             expires_at: String::new(),
             client_id: String::new(),
             email: String::new(),
+            user_id: String::new(),
             auth_path: PathBuf::from("/tmp/x"),
             auth_data: serde_json::json!({}),
         };
         assert!(!token_is_fresh(&creds));
+    }
+
+    #[test]
+    fn dedupe_keeps_live_and_drops_same_email_snapshot() {
+        let live = ScanResult {
+            account_email: "a@x.ai".into(),
+            rate_limit_percent: 0.2,
+            ..ScanResult::default()
+        };
+        let saved = ScanResult {
+            account_email: "A@x.ai".into(),
+            rate_limit_percent: 0.9,
+            saved: true,
+            saved_path: "/tmp/a.json".into(),
+            ..ScanResult::default()
+        };
+        let other = ScanResult {
+            account_email: "b@x.ai".into(),
+            rate_limit_percent: 0.1,
+            saved: true,
+            saved_path: "/tmp/b.json".into(),
+            ..ScanResult::default()
+        };
+        let sources = vec![
+            AuthSource {
+                path: PathBuf::from("/tmp/live.json"),
+                saved: false,
+            },
+            AuthSource {
+                path: PathBuf::from("/tmp/a.json"),
+                saved: true,
+            },
+            AuthSource {
+                path: PathBuf::from("/tmp/b.json"),
+                saved: true,
+            },
+        ];
+        let out = dedupe_accounts(&sources, vec![live, saved, other]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].account_email, "a@x.ai");
+        assert!(!out[0].saved);
+        assert_eq!(out[1].account_email, "b@x.ai");
+    }
+
+    #[test]
+    fn dedupe_collapses_same_user_id_even_when_emails_differ() {
+        let live = ScanResult {
+            account_email: "new@x.ai".into(),
+            account_user_id: "user-1".into(),
+            rate_limit_percent: 0.0,
+            ..ScanResult::default()
+        };
+        let saved = ScanResult {
+            account_email: "old@x.ai".into(),
+            account_user_id: "user-1".into(),
+            rate_limit_percent: 0.9,
+            saved: true,
+            saved_path: "/tmp/old.json".into(),
+            ..ScanResult::default()
+        };
+        let sources = vec![
+            AuthSource {
+                path: PathBuf::from("/tmp/live.json"),
+                saved: false,
+            },
+            AuthSource {
+                path: PathBuf::from("/tmp/old.json"),
+                saved: true,
+            },
+        ];
+        let out = dedupe_accounts(&sources, vec![live, saved]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].account_email, "new@x.ai");
+        assert!(!out[0].saved);
+    }
+
+    #[test]
+    fn snapshot_copies_auth_named_by_email() {
+        let tmp = std::env::temp_dir().join(format!(
+            "grok-super-usage-snap-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let auth = tmp.join("auth.json");
+        let dir = tmp.join("accounts");
+        std::fs::write(
+            &auth,
+            serde_json::json!({
+                "https://auth.x.ai::abc": {
+                    "key": "tok",
+                    "email": "Snap@X.AI"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(snapshot(Some(auth.clone()), Some(dir.clone())), 0);
+        let dest = dir.join("snap_at_x.ai.json");
+        assert!(dest.is_file());
+        let copied: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&dest).unwrap()).unwrap();
+        assert_eq!(copied["https://auth.x.ai::abc"]["email"], "Snap@X.AI");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn pick_primary_uses_live_login_even_when_colder() {
+        let live = ScanResult {
+            ready: true,
+            rate_limit_percent: 0.0,
+            account_email: "derrick@codechap.com".into(),
+            saved: false,
+            ..ScanResult::default()
+        };
+        let saved = ScanResult {
+            ready: true,
+            rate_limit_percent: 1.0,
+            account_email: "hello@codechap.com".into(),
+            saved: true,
+            saved_path: "/tmp/hello.json".into(),
+            ..ScanResult::default()
+        };
+        let primary = pick_primary(&[live, saved]);
+        assert_eq!(primary.account_email, "derrick@codechap.com");
+        assert!(!primary.saved);
+        assert_eq!(primary.rate_limit_percent, 0.0);
+    }
+
+    #[test]
+    fn remember_live_login_copies_current_cli_auth() {
+        let tmp = std::env::temp_dir().join(format!(
+            "grok-super-usage-remember-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let live = tmp.join("auth.json");
+        let dir = tmp.join("accounts");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &live,
+            serde_json::json!({
+                "https://auth.x.ai::abc": {
+                    "key": "tok",
+                    "email": "Live@X.AI",
+                    "user_id": "user-live"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let sources = vec![AuthSource {
+            path: live.clone(),
+            saved: false,
+        }];
+        let accounts = vec![ScanResult {
+            account_email: "Live@X.AI".into(),
+            account_user_id: "user-live".into(),
+            saved: false,
+            ..ScanResult::default()
+        }];
+        remember_live_login(&sources, Some(&dir), &accounts);
+        let dest = dir.join("live_at_x.ai.json");
+        assert!(dest.is_file(), "{}", dest.display());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

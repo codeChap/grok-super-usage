@@ -1,3 +1,4 @@
+mod accounts;
 mod billing;
 mod grok;
 mod proto;
@@ -25,9 +26,30 @@ enum Cmd {
         /// Print present/absent/unreadable if a Grok token exists (no usage API).
         #[arg(long)]
         probe: bool,
+        /// Path to the live Grok auth.json (default: ~/.grok/auth.json).
+        #[arg(long, env = "GROK_AUTH_PATH")]
+        auth: Option<PathBuf>,
+        /// Directory of extra saved auth.json snapshots (one SuperGrok login each).
+        #[arg(long)]
+        accounts_dir: Option<PathBuf>,
+    },
+    /// Copy the live Grok login into the accounts directory so it stays tracked after `grok login`.
+    Snapshot {
         /// Path to Grok auth.json (default: ~/.grok/auth.json).
         #[arg(long, env = "GROK_AUTH_PATH")]
         auth: Option<PathBuf>,
+        /// Destination directory (default: plugin accounts/).
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Delete a saved auth snapshot. Refuses paths outside the accounts directory.
+    Forget {
+        /// Saved auth.json to remove.
+        #[arg(long)]
+        path: PathBuf,
+        /// Accounts directory the path must sit inside.
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
     /// Current-cycle xAI API postpaid spend (Management API invoice preview).
     Billing {
@@ -49,9 +71,34 @@ enum Cmd {
 impl Cli {
     pub fn run(self) -> i32 {
         match self.cmd {
-            Cmd::Grok { probe, auth } => grok::run(probe, auth),
+            Cmd::Grok {
+                probe,
+                auth,
+                accounts_dir,
+            } => grok::run(probe, auth, accounts_dir),
+            Cmd::Snapshot { auth, dir } => grok::snapshot(auth, dir),
+            Cmd::Forget { path, dir } => accounts::forget(path, dir),
             Cmd::Billing { probe, key_file } => billing::run(probe, key_file),
             Cmd::StoreKey { out } => billing::store_key(out),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_lists_multi_account_commands() {
+        let help = Cli::command().render_long_help().to_string();
+        assert!(help.contains("snapshot"));
+        assert!(help.contains("forget"));
+        let mut grok = Cli::command()
+            .find_subcommand("grok")
+            .expect("grok")
+            .clone();
+        let grok_help = grok.render_long_help().to_string();
+        assert!(grok_help.contains("accounts-dir"));
     }
 }

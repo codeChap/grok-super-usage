@@ -19,10 +19,15 @@ PanelWindow {
   property bool billingHasData: false
   property string billingLabel: ""
   property string billingHelpText: ""
+  property var accounts: []
+  property string grokLoginEmail: ""
+  property string grokLoginName: ""
 
   signal closed()
   signal flagChanged(string key, bool on)
   signal keyPathCommitted(string path)
+  signal saveCurrentLogin()
+  signal forgetSavedLogin(string path)
 
   visible: opened
   color: "transparent"
@@ -65,7 +70,12 @@ PanelWindow {
     padding: Style.spacing.panelPadding
     radius: Style.cornerRadius
 
-    MouseArea { anchors.fill: parent; onClicked: {} }
+    // Sit behind the form so toggle/button hover and clicks reach the controls.
+    MouseArea {
+      z: -1
+      anchors.fill: parent
+      onClicked: {}
+    }
 
     Item {
       id: keyCatcher
@@ -110,8 +120,13 @@ PanelWindow {
           billingHasData: root.billingHasData
           billingLabel: root.billingLabel
           billingHelpText: root.billingHelpText
+          accounts: root.accounts
+          grokLoginEmail: root.grokLoginEmail
+          grokLoginName: root.grokLoginName
           onFlagChanged: function(key, on) { root.flagChanged(key, on) }
           onKeyPathCommitted: function(path) { root.keyPathCommitted(path) }
+          onSaveCurrentLogin: root.saveCurrentLogin()
+          onForgetSavedLogin: function(path) { root.forgetSavedLogin(path) }
         }
 
         Item {

@@ -1,6 +1,6 @@
 [package]
 name = "grok-super-usage"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "MIT"
 description = "Omarchy SuperGrok weekly usage bar widget — Rust scanner"
