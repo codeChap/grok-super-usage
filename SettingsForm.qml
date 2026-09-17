@@ -94,7 +94,7 @@ Column {
 
   Text {
     width: parent.width
-    text: "Grok CLI only keeps one login. Each scan keeps a copy of this login. After grok login with another SuperGrok account, the panel keeps the previous weekly block. Remove a saved login you no longer want."
+    text: "Grok CLI only keeps one login. The first scan of a new login keeps a copy. After grok login with another SuperGrok account, the panel keeps the previous weekly block. Remove a saved login you no longer want."
     color: form.dim
     font.family: form.fontFamily
     font.pixelSize: Style.font.caption

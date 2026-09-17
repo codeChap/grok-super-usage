@@ -66,9 +66,11 @@ Weekly percent comes from grok.com `GetGrokCreditsConfig` using `~/.grok/auth.js
 
 `grok login` replaces the CLI session. This plugin keeps a copy of each login it has scanned:
 
-1. Use the widget while signed in (or cog → **Save this login** if you want a copy before the next scan).
+1. Use the widget while signed in, or cog → **Save this login**.
 2. `grok login` with the new account.
 3. The bar chip and panel header follow the new CLI login, even at 0% for a fresh week. Previous logins stay as extra weekly blocks. The chip still lists each percent.
+
+A scan writes a snapshot only when that login is not already saved. It does not rewrite files on every refresh. Writes under the plugin folder reload the Omarchy bar.
 
 Saved copies live in the plugin `accounts/` folder (mode 600). They are only for this widget. `grok` itself still uses `~/.grok/auth.json`. Remove a saved login in Settings. Cap is 8.
 

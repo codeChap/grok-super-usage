@@ -55,6 +55,13 @@ pub fn copy_login(auth_path: &Path, dest_dir: &Path, stem: &str) -> i32 {
             return 1;
         }
     };
+    if dest.is_file() {
+        if let Ok(existing) = std::fs::read(&dest) {
+            if existing == raw {
+                return 0;
+            }
+        }
+    }
     if let Err(err) = atomic_write_secret(&dest, &raw) {
         eprintln!("grok-super-usage: could not write snapshot: {err}");
         return 1;
@@ -226,6 +233,29 @@ mod tests {
         std::fs::write(&inside, "{}").unwrap();
         assert_eq!(forget(inside.clone(), Some(dir.clone())), 0);
         assert!(!inside.is_file());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn copy_login_skips_write_when_bytes_match() {
+        let tmp = std::env::temp_dir().join(format!(
+            "grok-super-usage-copy-skip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let auth = tmp.join("auth.json");
+        let dir = tmp.join("accounts");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&auth, b"{\"k\":1}").unwrap();
+        assert_eq!(copy_login(&auth, &dir, "same"), 0);
+        let dest = dir.join("same.json");
+        let mtime = std::fs::metadata(&dest).unwrap().modified().unwrap();
+        assert_eq!(copy_login(&auth, &dir, "same"), 0);
+        assert_eq!(
+            std::fs::metadata(&dest).unwrap().modified().unwrap(),
+            mtime
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

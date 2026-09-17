@@ -146,6 +146,10 @@ fn remember_live_login(
         return;
     };
     let stem = snapshot_stem(&live.account_email, &live.account_user_id);
+    let dest = dir.join(format!("{stem}.json"));
+    if dest.is_file() {
+        return;
+    }
     let _ = copy_login(&live_src.path, dir, &stem);
 }
 
@@ -968,6 +972,11 @@ mod tests {
         remember_live_login(&sources, Some(&dir), &accounts);
         let dest = dir.join("live_at_x.ai.json");
         assert!(dest.is_file(), "{}", dest.display());
+        let first_mtime = std::fs::metadata(&dest).unwrap().modified().unwrap();
+        std::fs::write(&live, b"changed-live-bytes").unwrap();
+        remember_live_login(&sources, Some(&dir), &accounts);
+        let second_mtime = std::fs::metadata(&dest).unwrap().modified().unwrap();
+        assert_eq!(first_mtime, second_mtime);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
